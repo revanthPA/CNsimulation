@@ -1,0 +1,9 @@
+# Core dependencies
+networkx>=3.0
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+pyyaml>=6.0
+
+# Optional: Streamlit dashboard (Stage 12)
+streamlit>=1.28.0

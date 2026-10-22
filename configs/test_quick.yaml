@@ -1,0 +1,34 @@
+# Quick test configuration for fast verification
+# Reduced rounds for testing
+
+network:
+  num_nodes: 10
+  area_width: 50.0
+  area_height: 50.0
+  communication_range: 25.0
+  seed: 42
+  base_station_x: 25.0
+  base_station_y: 25.0
+  topology: "random"
+
+energy:
+  initial_energy: 1.0
+  E_elec: 50.0
+  E_amp: 0.0013
+  packet_size: 512
+
+simulation:
+  num_rounds: 50
+  packets_per_round: 1
+  packet_size: 512
+
+routing:
+  algorithm: "shortest_path"
+  alpha: 0.5
+  beta: 0.5
+
+output:
+  results_dir: "results"
+  save_results: true
+  generate_plots: true
+  plot_format: "png"

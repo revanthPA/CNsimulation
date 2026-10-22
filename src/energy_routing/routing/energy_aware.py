@@ -1,7 +1,7 @@
 """
 Energy-aware routing for Wireless Sensor Network simulation.
 
-Implements routing based on weighted cost: α·distance + β·(1/residual_energy).
+Implements routing based on weighted cost: α·distance + β·(1 - residual_energy).
 Higher residual energy = lower energy cost = more preferred path.
 """
 
@@ -17,7 +17,7 @@ class EnergyAwareRouting(RoutingStrategy):
     """
     Energy-aware routing using weighted cost function.
     
-    Cost = α * (distance / max_distance) + β * (1 / normalized_residual_energy)
+    Cost = α * (distance / max_distance) + β * (1 - normalized_residual_energy)
     
     Where:
     - α (alpha): weight for distance component (0 <= α <= 1)
@@ -26,7 +26,9 @@ class EnergyAwareRouting(RoutingStrategy):
     - normalized_residual_energy: remaining_energy / initial_energy (0 to 1)
       For base station (infinite energy): normalized_residual_energy = 1.0
     
-    The normalization ensures both components are in [0, 1] range for fair weighting.
+    Both components are normalized to [0, 1] range for fair weighting.
+    Lower residual energy increases the energy penalty, discouraging
+    routes through depleted nodes.
     """
     
     def __init__(self, alpha: float = 0.5, beta: float = 0.5):
@@ -85,7 +87,7 @@ class EnergyAwareRouting(RoutingStrategy):
         """
         Calculate weighted cost for an edge.
         
-        Cost = α * (distance / max_distance) + β * (1 / normalized_residual_energy)
+        Cost = α * (distance / max_distance) + β * (1 - normalized_residual_energy)
         
         Args:
             graph: NetworkX graph
@@ -95,7 +97,8 @@ class EnergyAwareRouting(RoutingStrategy):
             max_distance: Maximum communication range (for distance normalization)
             
         Returns:
-            Weighted cost for the edge
+            Weighted cost for the edge. Both components are in [0, 1],
+            so the total cost is in [0, 1] when α + β = 1.
         """
         # Get distance from graph edge attribute
         distance = graph[u][v].get("distance", 0.0)
@@ -111,12 +114,11 @@ class EnergyAwareRouting(RoutingStrategy):
         target_node = nodes[v]
         normalized_energy = self._get_normalized_residual_energy(target_node)
         
-        # Energy cost: inverse of normalized energy (lower energy = higher cost)
-        # If energy is 0, cost is infinite (node is dead, but dead nodes shouldn't be in graph)
-        if normalized_energy <= 0:
-            energy_cost = float('inf')
-        else:
-            energy_cost = 1.0 / normalized_energy
+        # Energy penalty: linear in [0, 1]. Lower residual energy = higher penalty.
+        # A fully depleted node (energy = 0) has penalty 1.0 (maximum).
+        # A fully charged node (energy = 1.0) has penalty 0.0 (minimum).
+        # Base station has normalized_energy = 1.0 → penalty 0.0 (always preferred).
+        energy_cost = 1.0 - normalized_energy
         
         # Weighted combination
         cost = self.alpha * normalized_distance + self.beta * energy_cost

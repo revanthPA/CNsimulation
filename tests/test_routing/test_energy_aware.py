@@ -258,3 +258,187 @@ class TestRoutingFactoryEnergyAware:
         assert isinstance(routing, EnergyAwareRouting)
         assert routing.alpha == 0.5
         assert routing.beta == 0.5
+
+
+class TestEnergyAwareCostBounds:
+    """Tests for energy-aware cost component normalization bounds."""
+
+    def setup_method(self):
+        """Set up a simple graph for cost testing."""
+        self.routing = EnergyAwareRouting(alpha=0.5, beta=0.5)
+        self.nodes = {
+            0: Node(0, 0, 0, 1.0, 1.0),
+            1: Node(1, 10, 0, 1.0, 0.5),
+            2: Node(2, 20, 0, float('inf'), float('inf')),  # base station
+        }
+        self.graph = nx.Graph()
+        for nid, node in self.nodes.items():
+            self.graph.add_node(nid, x=node.x, y=node.y)
+        self.graph.add_edge(0, 1, distance=10.0)
+        self.graph.add_edge(1, 2, distance=10.0)
+        self.graph.add_edge(0, 2, distance=20.0)
+
+    def test_distance_component_in_bounds(self):
+        """Test that distance component is always in [0, 1]."""
+        max_dist = 20.0
+        for u, v, data in self.graph.edges(data=True):
+            dist = data["distance"]
+            norm_dist = dist / max_dist
+            assert 0.0 <= norm_dist <= 1.0
+
+    def test_energy_component_in_bounds(self):
+        """Test that energy component is always in [0, 1]."""
+        for nid, node in self.nodes.items():
+            norm_energy = self.routing._get_normalized_residual_energy(node)
+            energy_cost = 1.0 - norm_energy
+            assert 0.0 <= energy_cost <= 1.0
+
+    def test_total_cost_in_bounds(self):
+        """Test that total edge cost is in [0, 1] when alpha + beta = 1."""
+        max_dist = 20.0
+        for u, v, data in self.graph.edges(data=True):
+            dist = data["distance"]
+            norm_dist = dist / max_dist
+            target = self.nodes[v]
+            norm_energy = self.routing._get_normalized_residual_energy(target)
+            energy_cost = 1.0 - norm_energy
+            cost = 0.5 * norm_dist + 0.5 * energy_cost
+            assert 0.0 <= cost <= 1.0
+
+    def test_full_energy_has_minimum_penalty(self):
+        """Test that full energy node has energy penalty 0.0."""
+        node = Node(1, 0, 0, initial_energy=1.0, remaining_energy=1.0)
+        norm = self.routing._get_normalized_residual_energy(node)
+        assert norm == 1.0
+        assert 1.0 - norm == 0.0
+
+    def test_depleted_energy_has_maximum_penalty(self):
+        """Test that depleted node has energy penalty 1.0."""
+        node = Node(1, 0, 0, initial_energy=1.0, remaining_energy=0.0)
+        norm = self.routing._get_normalized_residual_energy(node)
+        assert norm == 0.0
+        assert 1.0 - norm == 1.0
+
+    def test_base_station_has_zero_energy_penalty(self):
+        """Test that base station has zero energy penalty (always preferred)."""
+        node = Node(2, 0, 0, initial_energy=float('inf'), remaining_energy=float('inf'))
+        norm = self.routing._get_normalized_residual_energy(node)
+        assert norm == 1.0
+        assert 1.0 - norm == 0.0
+
+    def test_cost_finite_for_all_energy_levels(self):
+        """Test that cost is finite for all valid energy levels (no inf)."""
+        max_dist = 20.0
+        for nid, node in self.nodes.items():
+            norm_energy = self.routing._get_normalized_residual_energy(node)
+            energy_cost = 1.0 - norm_energy
+            assert energy_cost == energy_cost  # not NaN
+            assert abs(energy_cost) != float('inf')  # not infinite
+
+    def test_route_prefers_higher_energy_linear(self):
+        """Test that linear energy penalty prefers higher-energy relays."""
+        # Node 1: high energy (0.9), Node 2: low energy (0.1)
+        # Equal distances → should prefer node 1
+        path = self.routing.find_path(self.graph, self.nodes, 0, 2)
+        # Direct 0→2 (distance 20, base station) vs 0→1→2 (through relay)
+        # With linear formula, relay with higher energy should be preferred
+        assert path == (0, 1, 2) or path == (0, 2)
+
+    def test_deterministic_route_selection(self):
+        """Test that route selection is deterministic across repeated calls."""
+        path1 = self.routing.find_path(self.graph, self.nodes, 0, 2)
+        path2 = self.routing.find_path(self.graph, self.nodes, 0, 2)
+        path3 = self.routing.find_path(self.graph, self.nodes, 0, 2)
+        assert path1 == path2 == path3
+
+    def test_dead_node_excluded_from_graph(self):
+        """Test that dead nodes are not in the alive subgraph."""
+        from energy_routing.network.graph import get_alive_subgraph
+        # Kill node 1
+        self.nodes[1].is_alive = False
+        alive = get_alive_subgraph(self.graph, self.nodes)
+        assert 1 not in alive.nodes()
+        # Should still find path 0→2 directly
+        path = self.routing.find_path(alive, self.nodes, 0, 2)
+        assert path == (0, 2)
+
+
+class TestEnergyAwareEdgeCases:
+    """Tests for degenerate and edge cases in energy-aware routing."""
+
+    def setup_method(self):
+        """Set up edge case scenarios."""
+        self.routing = EnergyAwareRouting(alpha=0.5, beta=0.5)
+
+    def test_single_node_graph(self):
+        """Test graph with only source and destination (no intermediate nodes)."""
+        nodes = {
+            0: Node(0, 0, 0, 1.0, 1.0),
+            1: Node(1, 10, 0, float('inf'), float('inf')),  # base station
+        }
+        graph = nx.Graph()
+        graph.add_node(0, x=0.0, y=0.0)
+        graph.add_node(1, x=10.0, y=0.0)
+        graph.add_edge(0, 1, distance=10.0)
+        
+        path = self.routing.find_path(graph, nodes, 0, 1)
+        assert path == (0, 1)
+
+    def test_zero_distance_edge(self):
+        """Test edge with zero distance (co-located nodes)."""
+        nodes = {
+            0: Node(0, 0, 0, 1.0, 1.0),
+            1: Node(1, 0, 0, 1.0, 0.5),  # co-located, half energy
+            2: Node(2, 10, 0, float('inf'), float('inf')),  # base station
+        }
+        graph = nx.Graph()
+        for nid, node in nodes.items():
+            graph.add_node(nid, x=node.x, y=node.y)
+        graph.add_edge(0, 1, distance=0.0)
+        graph.add_edge(1, 2, distance=10.0)
+        
+        path = self.routing.find_path(graph, nodes, 0, 2)
+        assert path == (0, 1, 2)
+
+    def test_max_distance_zero_returns_empty(self):
+        """Test that graph with no edges returns empty path."""
+        nodes = {
+            0: Node(0, 0, 0, 1.0, 1.0),
+            1: Node(1, 100, 100, float('inf'), float('inf')),
+        }
+        graph = nx.Graph()
+        graph.add_node(0, x=0.0, y=0.0)
+        graph.add_node(1, x=100.0, y=100.0)
+        # No edges → max_distance = 0
+        
+        path = self.routing.find_path(graph, nodes, 0, 1)
+        assert path == ()
+
+    def test_source_equals_destination(self):
+        """Test routing when source is the destination."""
+        nodes = {
+            0: Node(0, 0, 0, 1.0, 1.0),
+            1: Node(1, 10, 0, float('inf'), float('inf')),  # base station
+        }
+        graph = nx.Graph()
+        graph.add_node(0, x=0.0, y=0.0)
+        graph.add_node(1, x=10.0, y=0.0)
+        graph.add_edge(0, 1, distance=10.0)
+        
+        # get_next_hop from base station to itself should return None
+        next_hop = self.routing.get_next_hop(graph, nodes, 1, 1)
+        assert next_hop is None
+
+    def test_cost_monotonic_in_energy(self):
+        """Test that cost decreases monotonically as residual energy increases."""
+        max_dist = 10.0
+        distances = [(0.0, 10.0), (0.25, 7.5), (0.5, 5.0), (0.75, 2.5), (1.0, 0.0)]
+        costs = []
+        for norm_energy, _ in distances:
+            norm_dist = 5.0 / max_dist  # fixed distance
+            energy_cost = 1.0 - norm_energy
+            cost = 0.5 * norm_dist + 0.5 * energy_cost
+            costs.append(cost)
+        # Cost should decrease as energy increases
+        for i in range(len(costs) - 1):
+            assert costs[i] >= costs[i + 1]

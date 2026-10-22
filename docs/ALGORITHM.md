@@ -26,7 +26,7 @@ cost(path) = Σ distance(node_i, node_{i+1})
 
 **Edge Cost Function**:
 ```
-cost(u, v) = α · (distance(u, v) / max_distance) + β · (1 / normalized_energy(v))
+cost(u, v) = α · (distance(u, v) / max_distance) + β · (1 - normalized_energy(v))
 ```
 
 Where:
@@ -44,7 +44,13 @@ Where:
 - α = 1.0, β = 0.0 → Pure shortest path
 - α = 0.0, β = 1.0 → Pure energy-aware (maximize residual energy)
 
-**Base Station Handling**: Explicitly returns normalized_energy = 1.0 to avoid inf/inf issues.
+**Component Bounds**:
+- Distance component: `distance / max_distance` ∈ [0, 1]
+- Energy component: `1 - normalized_energy` ∈ [0, 1]
+- Total edge cost: ∈ [0, 1] when α + β = 1
+
+**Base Station Handling**: Explicitly returns normalized_energy = 1.0,
+giving energy component 0.0 (base station always preferred as receiver).
 
 ## Energy Model
 

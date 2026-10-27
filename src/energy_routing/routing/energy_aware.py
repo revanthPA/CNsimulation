@@ -37,7 +37,7 @@ class EnergyAwareRouting(RoutingStrategy):
         
         Args:
             alpha: Distance weight (0 <= alpha <= 1)
-            beta: Energy weight (0 <= beta <= 1), alpha + beta = 1
+            beta: Weight for energy component (0 <= beta <= 1), alpha + beta = 1
             
         Raises:
             ValueError: If alpha or beta are out of range or don't sum to 1
@@ -51,6 +51,13 @@ class EnergyAwareRouting(RoutingStrategy):
         
         self.alpha = alpha
         self.beta = beta
+        # Cache for max edge distance, keyed by graph object.
+        # Graph edge distances are static during simulation, so the cached
+        # value remains valid as long as the same graph object is passed.
+        # A single-entry cache is sufficient because the simulator reuses the
+        # same alive subgraph for all packets within a round.
+        self._cached_graph = None
+        self._cached_max_distance = 0.0
     
     def _get_normalized_residual_energy(self, node: Node) -> float:
         """
@@ -76,6 +83,34 @@ class EnergyAwareRouting(RoutingStrategy):
         normalized = node.remaining_energy / node.initial_energy
         return max(0.0, min(1.0, normalized))
     
+    def _get_max_distance(self, graph: nx.Graph) -> float:
+        """
+        Get the maximum edge distance in the graph, with caching.
+
+        The maximum distance depends only on edge attributes, which are
+        static during simulation. The cached value remains valid as long
+        as the same graph object is passed, which is the case within a
+        simulation round where the same alive subgraph is reused.
+
+        Args:
+            graph: NetworkX graph with distance edge attributes
+
+        Returns:
+            Maximum edge distance, or 0.0 if the graph has no edges
+        """
+        if graph is self._cached_graph:
+            return self._cached_max_distance
+
+        max_distance = 0.0
+        for u, v, data in graph.edges(data=True):
+            dist = data.get("distance", 0.0)
+            if dist > max_distance:
+                max_distance = dist
+
+        self._cached_graph = graph
+        self._cached_max_distance = max_distance
+        return max_distance
+
     def _calculate_edge_cost(
         self,
         graph: nx.Graph,
@@ -152,12 +187,9 @@ class EnergyAwareRouting(RoutingStrategy):
         if source not in graph or destination not in graph:
             return ()
         
-        # Find max distance for normalization (communication range)
-        max_distance = 0.0
-        for u, v, data in graph.edges(data=True):
-            dist = data.get("distance", 0.0)
-            if dist > max_distance:
-                max_distance = dist
+        # Get max distance for normalization (communication range)
+        # Cached per graph object; edge distances are static during simulation
+        max_distance = self._get_max_distance(graph)
         
         # If no edges, can't route
         if max_distance == 0.0:

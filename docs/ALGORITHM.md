@@ -52,6 +52,14 @@ Where:
 **Base Station Handling**: Explicitly returns normalized_energy = 1.0,
 giving energy component 0.0 (base station always preferred as receiver).
 
+**Performance Optimization**: The maximum edge distance (`max_distance`)
+used for distance normalization is cached per graph object. Since edge
+distances are static during simulation and the same alive subgraph is
+reused for all packets within a round, the cached value avoids redundant
+O(E) edge iteration on every `find_path` call. The cache is keyed by
+graph object identity and is valid as long as the same graph is passed.
+Routing decisions are identical with or without the cache.
+
 ## Energy Model
 
 ### First-Order Radio Model
@@ -167,9 +175,28 @@ def _deliver_hop(self, current, next_hop, distance):
 ### Routing Comparison (Main Experiment)
 
 - **Algorithms**: Shortest Path vs Energy-Aware (α=0.5, β=0.5)
-- **Seeds**: 5 seeds (42, 43, 44, 45, 46)
+- **Network**: 50 nodes, 100×100 m, range 20 m, 1.0 J initial energy
+- **Simulation**: 1000 rounds, 1 packet/round
+- **Seeds**: 20 seeds (42–61) for statistical significance
 - **Fair Comparison**: Same seed → same topology → different routing
-- **Statistical Significance**: Mean ± std across seeds
+- **Statistical Significance**: Mean ± std and 95% CI across seeds
+
+**Measured Results (20 seeds, `configs/base.yaml`):**
+- SP mean FND: 150.7 ± 54.4 rounds
+- EA mean FND: 193.6 ± 75.4 rounds
+- Mean paired FND improvement (EA−SP): 42.9 rounds
+- 95% CI for paired FND diff: [22.2, 63.5]
+- SP mean PDR: 0.3404 ± 0.1368
+- EA mean PDR: 0.3477 ± 0.1367
+- Mean paired PDR diff: +0.0073
+- FND improvements: 16/20 seeds, Ties: 3/20, Regressions: 1/20
+- HND/LND: Not observed within 1000-round horizon for any seed
+
+**Interpretation:** Energy-aware routing extends network lifetime (FND)
+in the majority of seeds, with a mean improvement of ~43 rounds.
+PDR is nearly identical between algorithms — energy-aware improves
+lifetime, not delivery ratio. HND and LND were not observed within the
+simulation horizon.
 
 ### Network Size Experiment
 

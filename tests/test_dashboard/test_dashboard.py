@@ -28,6 +28,20 @@ class TestDashboardFunctions:
         assert classify_result_data({"shortest_path": {}, "energy_aware": {}}) == "comparison_pair"
         assert classify_result_data({"message": "unrecognized"}) == "raw"
 
+    def test_filter_saved_result_files(self):
+        from pathlib import Path
+        from energy_routing.dashboard import filter_saved_result_files
+
+        files = [
+            Path("results/sim_seed42.json"),
+            Path("results/dashboard/comparisons/summary/summary.json"),
+            Path("results/dashboard/comparisons/raw/pair_seed42.json"),
+        ]
+        assert filter_saved_result_files(files, "seed42", "All results") == [files[0], files[2]]
+        assert filter_saved_result_files(files, result_type="Single runs") == [files[0]]
+        assert filter_saved_result_files(files, result_type="Comparison summaries") == [files[1]]
+        assert filter_saved_result_files(files, result_type="Paired seed runs") == [files[2]]
+
     def test_plot_to_streamlit(self):
         """Test plot_to_streamlit function."""
         import matplotlib

@@ -370,6 +370,25 @@ def find_saved_result_files(base_dir: str = "results") -> List[Path]:
     return json_files
 
 
+def filter_saved_result_files(
+    result_files: List[Path], search: str = "", result_type: str = "All results"
+) -> List[Path]:
+    """Filter saved JSON paths by filename and dashboard result category."""
+    search = search.strip().lower()
+    filtered = [path for path in result_files if not search or search in path.name.lower()]
+    if result_type == "Single runs":
+        return [path for path in filtered if "comparisons" not in {part.lower() for part in path.parts}]
+    if result_type == "Comparison summaries":
+        return [path for path in filtered if "summary" in {part.lower() for part in path.parts}]
+    if result_type == "Paired seed runs":
+        return [
+            path for path in filtered
+            if "comparisons" in {part.lower() for part in path.parts}
+            and "summary" not in {part.lower() for part in path.parts}
+        ]
+    return filtered
+
+
 def load_result_file(file_path: Path) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Safely load and parse a JSON result file."""
     try:
@@ -475,14 +494,25 @@ def main():
     # Custom Clean & Professional Scientific CSS with Scaled Typography
     st.markdown("""
     <style>
-    /* Global Base Scale */
+    /* Retro terminal palette with crisp pixel-style edges and type */
+    :root {
+        --ink: #172554;
+        --paper: #fff8dc;
+        --mint: #b8f3d0;
+        --teal: #176b68;
+        --orange: #f28c45;
+        --line: #29465b;
+    }
     html, body, [class*="css"] {
         font-size: 17.5px !important;
     }
     .stApp {
-        background-color: #f8fafc;
-        color: #0f172a;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background-color: var(--paper);
+        background-image: linear-gradient(rgba(23, 37, 84, .035) 1px, transparent 1px),
+                          linear-gradient(90deg, rgba(23, 37, 84, .035) 1px, transparent 1px);
+        background-size: 24px 24px;
+        color: var(--ink);
+        font-family: "Courier New", Courier, monospace;
     }
 
     /* Constrain ultra-wide stretch on 4K/high-res screens for optimal reading layout */
@@ -498,20 +528,24 @@ def main():
 
     /* Header Area */
     .app-header {
-        padding: 1.5rem 0 1.25rem 0;
+        padding: 1.5rem 1.75rem 1.5rem 1.75rem;
         margin-bottom: 1.5rem;
-        border-bottom: 1px solid #e2e8f0;
+        background: #172554;
+        border: 4px solid #172554;
+        box-shadow: 8px 8px 0 #f28c45;
     }
     .app-title {
-        font-size: 2.65rem;
-        font-weight: 800;
-        color: #0f172a;
-        letter-spacing: -0.025em;
+        font-family: "Courier New", Courier, monospace;
+        font-size: 2.3rem;
+        font-weight: 900;
+        color: #b8f3d0;
+        letter-spacing: 0.025em;
+        text-shadow: 3px 3px 0 #176b68;
         margin-bottom: 0.45rem;
     }
     .app-subtitle {
-        font-size: 1.15rem;
-        color: #475569;
+        font-size: 1.02rem;
+        color: #fff8dc;
         line-height: 1.6;
         max-width: 1100px;
     }
@@ -519,14 +553,16 @@ def main():
     /* Section Headers */
     .section-title {
         font-size: 1.45rem;
-        font-weight: 700;
-        color: #0f172a;
+        font-weight: 900;
+        color: #172554;
+        text-transform: uppercase;
+        letter-spacing: 0.035em;
         margin-top: 0.5rem;
         margin-bottom: 0.35rem;
     }
     .section-desc {
         font-size: 1.05rem;
-        color: #64748b;
+        color: #466176;
         line-height: 1.55;
         margin-bottom: 1.35rem;
     }
@@ -534,28 +570,28 @@ def main():
     /* Tabs Styling */
     .stTabs [data-baseweb="tab-list"] {
         gap: 1.75rem;
-        border-bottom: 2px solid #e2e8f0;
+        border-bottom: 3px solid #29465b;
         margin-bottom: 1.5rem;
     }
     .stTabs [data-baseweb="tab"] {
         font-size: 1.15rem !important;
         font-weight: 600 !important;
-        color: #64748b !important;
+        color: #466176 !important;
         padding: 0.75rem 1.25rem !important;
         background-color: transparent !important;
     }
     .stTabs [aria-selected="true"] {
-        color: #0f172a !important;
-        border-bottom: 3px solid #0284c7 !important;
+        color: #176b68 !important;
+        border-bottom: 4px solid #f28c45 !important;
     }
 
     /* Form & Container Polish */
     div[data-testid="stForm"] {
-        background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
+        background-color: #fffdf2;
+        border: 3px solid #29465b;
+        border-radius: 0;
         padding: 1.75rem;
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.03);
+        box-shadow: 6px 6px 0 rgba(23, 37, 84, .18);
     }
 
     /* Input Labels and Widgets */
@@ -564,13 +600,16 @@ def main():
     div[data-testid="stWidgetLabel"] {
         font-size: 1.05rem !important;
         font-weight: 600 !important;
-        color: #1e293b !important;
+        color: #172554 !important;
         margin-bottom: 0.35rem !important;
     }
     div[data-baseweb="input"] input {
         font-size: 1.1rem !important;
         min-height: 44px !important;
         padding: 0.5rem 0.75rem !important;
+        background: #fffdf2 !important;
+        border: 2px solid #466176 !important;
+        border-radius: 0 !important;
     }
     div[data-baseweb="select"] div {
         font-size: 1.1rem !important;
@@ -586,27 +625,31 @@ def main():
         font-weight: 600 !important;
         min-height: 48px !important;
         padding: 0.65rem 1.75rem !important;
-        border-radius: 8px !important;
+        border-radius: 0 !important;
+        border: 3px solid #172554 !important;
+        box-shadow: 4px 4px 0 #f28c45 !important;
+        font-family: "Courier New", Courier, monospace !important;
+        text-transform: uppercase !important;
     }
 
     /* Metric Cards */
     div[data-testid="stMetric"] {
-        background-color: #ffffff !important;
-        border: 1px solid #e2e8f0 !important;
-        border-radius: 8px !important;
+        background-color: #fffdf2 !important;
+        border: 2px solid #29465b !important;
+        border-radius: 0 !important;
         padding: 1.15rem 1.25rem !important;
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.03) !important;
+        box-shadow: 4px 4px 0 rgba(23, 37, 84, .14) !important;
     }
     div[data-testid="stMetricLabel"] p,
     div[data-testid="stMetricLabel"] div {
-        color: #64748b !important;
+        color: #466176 !important;
         font-size: 0.88rem !important;
         font-weight: 700 !important;
         letter-spacing: 0.04em !important;
         text-transform: uppercase !important;
     }
     div[data-testid="stMetricValue"] div {
-        color: #0f172a !important;
+        color: #172554 !important;
         font-size: 1.85rem !important;
         font-weight: 800 !important;
         margin-top: 0.2rem !important;
@@ -621,14 +664,14 @@ def main():
     div[data-testid="stTable"] th {
         font-size: 1.08rem !important;
         padding: 0.85rem 1rem !important;
-        color: #0f172a !important;
+        color: #172554 !important;
         font-weight: 700 !important;
     }
     .stTable td,
     div[data-testid="stTable"] td {
         font-size: 1.02rem !important;
         padding: 0.85rem 1rem !important;
-        color: #1e293b !important;
+        color: #29465b !important;
     }
     div[data-testid="stDataFrame"] {
         font-size: 1.02rem !important;
@@ -636,11 +679,11 @@ def main():
 
     /* Summary Outcome Banner */
     .outcome-box {
-        background-color: #f0fdf4;
-        border: 1px solid #bbf7d0;
-        color: #166534;
+        background-color: #b8f3d0;
+        border: 3px solid #176b68;
+        color: #172554;
         padding: 1.15rem 1.4rem;
-        border-radius: 8px;
+        border-radius: 0;
         font-size: 1.1rem;
         line-height: 1.6;
         margin: 1.25rem 0;
@@ -650,20 +693,151 @@ def main():
     .formula-note {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         font-size: 0.95rem;
-        color: #334155;
-        background-color: #f1f5f9;
+        color: #172554;
+        background-color: #b8f3d0;
         padding: 0.55rem 0.95rem;
-        border-radius: 6px;
-        border: 1px solid #e2e8f0;
+        border-radius: 0;
+        border: 2px solid #176b68;
         display: inline-block;
         margin-bottom: 0.85rem;
     }
 
     /* Expander header font */
+    div[data-testid="stExpander"],
+    div[data-testid="stAlert"],
+    div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        border-radius: 0 !important;
+    }
     div[data-testid="stExpander"] details summary p {
         font-size: 1.1rem !important;
-        font-weight: 600 !important;
-        color: #0f172a !important;
+        font-weight: 700 !important;
+        color: #172554 !important;
+        font-family: "Courier New", Courier, monospace !important;
+    }
+    div[data-testid="stExpander"] {
+        border: 2px solid #29465b !important;
+        background: rgba(255, 253, 242, .92) !important;
+    }
+    div[data-testid="stDataFrame"], div[data-testid="stTable"] {
+        border: 2px solid #29465b !important;
+        background: #fffdf2 !important;
+    }
+    button[kind="primary"] {
+        background: #176b68 !important;
+        color: #fff8dc !important;
+    }
+    button:hover {
+        filter: brightness(1.06);
+        transform: translate(-1px, -1px);
+    }
+    @media (max-width: 760px) {
+        .block-container {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+            padding-top: 1rem !important;
+        }
+        .app-header { padding: 1rem !important; box-shadow: 4px 4px 0 #f28c45 !important; }
+        .app-title { font-size: 1.6rem !important; }
+        .app-subtitle { font-size: .95rem !important; }
+        .stTabs [data-baseweb="tab-list"] { gap: .2rem !important; }
+        .stTabs [data-baseweb="tab"] { padding: .55rem .6rem !important; font-size: .88rem !important; }
+    }
+
+    /* Streamlit's selected dark theme */
+    html[data-theme="dark"] .stApp,
+    body[data-theme="dark"] .stApp {
+        background-color: #101827 !important;
+        background-image: linear-gradient(rgba(184, 243, 208, .045) 1px, transparent 1px),
+                          linear-gradient(90deg, rgba(184, 243, 208, .045) 1px, transparent 1px) !important;
+        color: #e6f4ea !important;
+    }
+    html[data-theme="dark"] .app-header,
+    body[data-theme="dark"] .app-header {
+        background: #0b1220 !important;
+        border-color: #78c7a2 !important;
+        box-shadow: 8px 8px 0 #d77d3d !important;
+    }
+    html[data-theme="dark"] .app-title,
+    body[data-theme="dark"] .app-title { color: #b8f3d0 !important; }
+    html[data-theme="dark"] .app-subtitle,
+    body[data-theme="dark"] .app-subtitle { color: #d6e5dd !important; }
+    html[data-theme="dark"] .section-title,
+    body[data-theme="dark"] .section-title,
+    html[data-theme="dark"] div[data-testid="stWidgetLabel"],
+    body[data-theme="dark"] div[data-testid="stWidgetLabel"],
+    html[data-theme="dark"] div[data-testid="stExpander"] details summary p,
+    body[data-theme="dark"] div[data-testid="stExpander"] details summary p {
+        color: #b8f3d0 !important;
+    }
+    html[data-theme="dark"] .section-desc,
+    body[data-theme="dark"] .section-desc,
+    html[data-theme="dark"] label[data-testid="stWidgetLabel"] p,
+    body[data-theme="dark"] label[data-testid="stWidgetLabel"] p { color: #b6c8c5 !important; }
+    html[data-theme="dark"] div[data-testid="stForm"],
+    body[data-theme="dark"] div[data-testid="stForm"],
+    html[data-theme="dark"] div[data-testid="stMetric"],
+    body[data-theme="dark"] div[data-testid="stMetric"],
+    html[data-theme="dark"] div[data-testid="stExpander"],
+    body[data-theme="dark"] div[data-testid="stExpander"],
+    html[data-theme="dark"] div[data-testid="stDataFrame"],
+    body[data-theme="dark"] div[data-testid="stDataFrame"],
+    html[data-theme="dark"] div[data-testid="stTable"],
+    body[data-theme="dark"] div[data-testid="stTable"] {
+        background-color: #182435 !important;
+        border-color: #587a78 !important;
+        color: #e6f4ea !important;
+    }
+    html[data-theme="dark"] div[data-testid="stMetricValue"] div,
+    body[data-theme="dark"] div[data-testid="stMetricValue"] div,
+    html[data-theme="dark"] .stTable td,
+    body[data-theme="dark"] .stTable td,
+    html[data-theme="dark"] div[data-testid="stTable"] td,
+    body[data-theme="dark"] div[data-testid="stTable"] td { color: #e6f4ea !important; }
+    html[data-theme="dark"] .stTable th,
+    body[data-theme="dark"] .stTable th,
+    html[data-theme="dark"] div[data-testid="stTable"] th,
+    body[data-theme="dark"] div[data-testid="stTable"] th { color: #b8f3d0 !important; }
+    html[data-theme="dark"] div[data-baseweb="input"] input,
+    body[data-theme="dark"] div[data-baseweb="input"] input,
+    html[data-theme="dark"] div[data-baseweb="select"] > div,
+    body[data-theme="dark"] div[data-baseweb="select"] > div {
+        background-color: #101827 !important;
+        color: #e6f4ea !important;
+        border-color: #78908f !important;
+    }
+    html[data-theme="dark"] .outcome-box,
+    body[data-theme="dark"] .outcome-box,
+    html[data-theme="dark"] .formula-note,
+    body[data-theme="dark"] .formula-note {
+        background-color: #173a38 !important;
+        border-color: #65b99c !important;
+        color: #d8f7e5 !important;
+    }
+    html[data-theme="dark"] .stTabs [data-baseweb="tab"],
+    body[data-theme="dark"] .stTabs [data-baseweb="tab"] { color: #b6c8c5 !important; }
+    html[data-theme="dark"] .stTabs [aria-selected="true"],
+    body[data-theme="dark"] .stTabs [aria-selected="true"] { color: #b8f3d0 !important; }
+
+    /* Also follow the operating system when Streamlit is set to auto theme. */
+    @media (prefers-color-scheme: dark) {
+        html:not([data-theme="light"]) .stApp {
+            background-color: #101827 !important;
+            background-image: linear-gradient(rgba(184, 243, 208, .045) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(184, 243, 208, .045) 1px, transparent 1px) !important;
+            color: #e6f4ea !important;
+        }
+        html:not([data-theme="light"]) div[data-testid="stForm"],
+        html:not([data-theme="light"]) div[data-testid="stMetric"],
+        html:not([data-theme="light"]) div[data-testid="stExpander"],
+        html:not([data-theme="light"]) div[data-testid="stDataFrame"],
+        html:not([data-theme="light"]) div[data-testid="stTable"] {
+            background-color: #182435 !important;
+            border-color: #587a78 !important;
+            color: #e6f4ea !important;
+        }
+        html:not([data-theme="light"]) .app-header { background: #0b1220 !important; }
+        html:not([data-theme="light"]) .app-title,
+        html:not([data-theme="light"]) .section-title { color: #b8f3d0 !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -714,6 +888,13 @@ def main():
     except Exception as error:
         st.error(f"Could not load that configuration. Check its YAML syntax and required fields. Details: {error}")
         st.stop()
+
+    st.caption(
+        f"Starting values: {default_settings.network.num_nodes} nodes · "
+        f"{default_settings.simulation.num_rounds:,} rounds · "
+        f"{default_settings.network.area_width:g} × {default_settings.network.area_height:g} m · "
+        f"seed {default_settings.network.seed}"
+    )
 
     # First-run orientation: keep the existing simulation workflow visible after a short overview.
     with st.container(border=True):
@@ -813,6 +994,7 @@ def main():
                     st.slider("Energy Weight (beta = 1 - alpha)", 0.0, 1.0, beta, disabled=True, help="Automatically complementary so alpha + beta = 1.0.")
             else:
                 alpha, beta = 0.5, 0.5
+                st.caption("Shortest-Path chooses the route with the lowest total distance.")
 
             with st.expander("Advanced network, packet, and radio settings"):
                 adv_network = st.columns(4)
@@ -973,6 +1155,11 @@ def main():
 
             comp_alpha = st.slider("Energy-Aware Distance Weight (alpha)", 0.0, 1.0, 0.5, 0.05)
             comp_beta = round(1.0 - comp_alpha, 4)
+            st.caption(
+                f"This comparison runs {comp_num_seeds * 2} simulations: "
+                f"{comp_num_seeds} matched seeds for each routing strategy. "
+                f"Energy weight β = {comp_beta:.2f}."
+            )
 
             submit_comp = st.form_submit_button("Compare Algorithms", type="primary", use_container_width=True)
 
@@ -1166,6 +1353,20 @@ def main():
         result_files = find_saved_result_files("results")
         selected_file: Optional[Path] = None
 
+        result_search_col, result_type_col = st.columns([2, 1])
+        with result_search_col:
+            result_search = st.text_input(
+                "Find a result",
+                placeholder="Search filenames, for example: seed42 or comparison",
+                help="Search saved JSON filenames. Leave blank to show the newest results.",
+            ).strip().lower()
+        with result_type_col:
+            result_type = st.selectbox(
+                "Result type",
+                ["All results", "Single runs", "Comparison summaries", "Paired seed runs"],
+            )
+        result_files = filter_saved_result_files(result_files, result_search, result_type)
+
         r_col1, r_col2 = st.columns([2, 1])
         with r_col1:
             if result_files:
@@ -1179,7 +1380,10 @@ def main():
                 if selected_rel_path:
                     selected_file = Path(selected_rel_path)
             else:
-                st.info("No saved JSON result files found in the results directory.")
+                if result_search or result_type != "All results":
+                    st.info("No saved results match those filters. Clear the search or choose All results.")
+                else:
+                    st.info("No saved JSON result files found in the results directory.")
 
         with r_col2:
             uploaded_file = st.file_uploader("Upload external result JSON:", type=["json"])

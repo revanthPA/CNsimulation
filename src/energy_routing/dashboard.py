@@ -384,6 +384,83 @@ def load_result_file(file_path: Path) -> Tuple[Optional[Dict[str, Any]], Optiona
         return None, f"Failed to read {file_path.name}: {e}"
 
 
+def classify_result_data(data: Dict[str, Any]) -> str:
+    """Identify the saved result shape so each JSON format gets a useful view."""
+    if not isinstance(data, dict):
+        return "raw"
+    if "round_metrics" in data or "packet_delivery_ratio" in data:
+        return "single"
+    if "comparison" in data and isinstance(data["comparison"], dict):
+        return "comparison_summary"
+    if "shortest_path" in data and "energy_aware" in data:
+        return "comparison_pair"
+    return "raw"
+
+
+def _metric_text(value: Any, suffix: str = "", precision: int = 2) -> str:
+    if value is None:
+        return "Not observed"
+    if isinstance(value, (int, float)):
+        return f"{value:.{precision}f}{suffix}"
+    return str(value)
+
+
+def display_saved_comparison(data: Dict[str, Any], *, summary: bool) -> None:
+    """Render paired comparison JSON as readable algorithm cards and tables."""
+    algorithm_a = data.get("algorithm_a", "shortest_path")
+    algorithm_b = data.get("algorithm_b", "energy_aware")
+    if summary:
+        stats_a = data.get("comparison", {}).get(algorithm_a, data.get(algorithm_a, {}))
+        stats_b = data.get("comparison", {}).get(algorithm_b, data.get(algorithm_b, {}))
+    else:
+        stats_a = data.get(algorithm_a, {})
+        stats_b = data.get(algorithm_b, {})
+    if not isinstance(stats_a, dict) or not isinstance(stats_b, dict):
+        st.warning("This comparison JSON does not contain readable algorithm results.")
+        return
+
+    st.markdown("#### Algorithm comparison")
+    left, right = st.columns(2)
+    for column, label, stats in ((left, algorithm_a, stats_a), (right, algorithm_b, stats_b)):
+        with column:
+            st.markdown(f"##### {label.replace('_', ' ').title()}")
+            m1, m2 = st.columns(2)
+            fnd = stats.get("fnd_mean", stats.get("mean_fnd", stats.get("fnd")))
+            pdr = stats.get("pdr_mean", stats.get("mean_pdr", stats.get("packet_delivery_ratio")))
+            m1.metric("Mean FND", _metric_text(fnd, " rounds", 1))
+            m2.metric("Mean PDR", _metric_text(pdr, "", 4))
+            m3, m4 = st.columns(2)
+            energy = stats.get("final_energy_mean", stats.get("mean_final_energy", stats.get("final_total_remaining_energy")))
+            runs = stats.get("num_runs", 1)
+            m3.metric("Mean remaining energy", _metric_text(energy, " J", 3))
+            m4.metric("Runs", str(runs))
+
+    table_rows = []
+    for label, stats in ((algorithm_a, stats_a), (algorithm_b, stats_b)):
+        table_rows.append({
+            "Algorithm": label.replace("_", " ").title(),
+            "FND (mean ± SD)": (
+                f"{_metric_text(stats.get('fnd_mean', stats.get('mean_fnd', stats.get('fnd'))), precision=1)} ± "
+                f"{_metric_text(stats.get('fnd_std', stats.get('std_fnd')), precision=1)}"
+            ),
+            "PDR (mean ± SD)": (
+                f"{_metric_text(stats.get('pdr_mean', stats.get('mean_pdr', stats.get('packet_delivery_ratio'))), precision=4)} ± "
+                f"{_metric_text(stats.get('pdr_std', stats.get('std_pdr')), precision=4)}"
+            ),
+            "Runs": stats.get("num_runs", 1),
+        })
+    st.dataframe(pd.DataFrame(table_rows), hide_index=True, use_container_width=True)
+
+    improvement = data.get("comparison", {}).get("improvement", {}) if summary else {}
+    if improvement:
+        with st.container(border=True):
+            st.markdown("**Energy-Aware change relative to Shortest-Path**")
+            cols = st.columns(min(len(improvement), 4))
+            for col, (metric, value) in zip(cols, improvement.items()):
+                label = metric.replace("_mean", "").replace("_", " ").title()
+                col.metric(label, _metric_text(value, "%" if metric.endswith("_mean") else "", 2))
+
+
 # ---------------------------------------------------------------------------
 # Streamlit Application Layout
 # ---------------------------------------------------------------------------
@@ -1092,8 +1169,13 @@ def main():
         r_col1, r_col2 = st.columns([2, 1])
         with r_col1:
             if result_files:
-                file_options = [str(f.relative_to(Path("."))) if str(f).startswith(".") else str(f) for f in result_files]
-                selected_rel_path = st.selectbox("Select saved result file:", file_options)
+                file_options = [str(f) for f in result_files]
+                selected_rel_path = st.selectbox(
+                    "Select a saved result:",
+                    file_options,
+                    format_func=lambda value: Path(value).name,
+                    help="Newest JSON results appear first. Select one to see its metrics and charts.",
+                )
                 if selected_rel_path:
                     selected_file = Path(selected_rel_path)
             else:
@@ -1124,33 +1206,60 @@ def main():
         if data_to_show:
             st.divider()
 
-            # Check if this is a comparison summary file
-            if "comparison" in data_to_show or "algorithm_a" in data_to_show:
-                st.markdown('<div class="section-title">Comparison Experiment Summary</div>', unsafe_allow_html=True)
-                st.json(data_to_show)
+            result_kind = classify_result_data(data_to_show)
+            title = selected_file.name if selected_file is not None else getattr(uploaded_file, "name", "Uploaded result")
+            st.subheader(title)
+            st.caption("Readable result view · original JSON is available below")
 
-            # Check if this is a single simulation result
-            elif "round_metrics" in data_to_show or "packet_delivery_ratio" in data_to_show:
-                st.markdown('<div class="section-title">Single Simulation Result</div>', unsafe_allow_html=True)
+            if result_kind == "single":
+                config = data_to_show.get("config", {})
+                network = config.get("network", {}) if isinstance(config, dict) else {}
+                run_info = st.columns(4)
+                run_info[0].metric("Routing", str(config.get("routing", {}).get("algorithm", "Unknown")).replace("_", " ").title())
+                run_info[1].metric("Sensor nodes", str(network.get("num_nodes", "—")))
+                run_info[2].metric("Seed", str(network.get("seed", "—")))
+                run_info[3].metric("Rounds", str(len(data_to_show.get("round_metrics", [])) or config.get("simulation", {}).get("num_rounds", "—")))
                 display_simulation_results(data_to_show)
 
-                # Show configuration
-                cfg = data_to_show.get("config", {})
-                if cfg:
-                    with st.expander("Simulation Configuration", expanded=False):
-                        st.json(cfg)
-
-                # Render reconstructed metrics chart
                 fig = plot_simulation_metrics(data_to_show)
                 if fig:
-                    st.markdown('<div class="section-desc" style="margin-top: 1rem;">Reconstructed round-by-round time-series curves:</div>', unsafe_allow_html=True)
+                    st.markdown("#### Network health over time")
                     st.pyplot(fig)
                     plt.close(fig)
                 else:
-                    st.info("No round-by-round time-series metrics available in this result file.")
+                    st.info("This result contains summary metrics but no round-by-round history to chart.")
+                if config:
+                    with st.expander("Simulation configuration", expanded=False):
+                        config_rows = [
+                            {"Setting": f"{section.replace('_', ' ').title()} · {key.replace('_', ' ')}", "Value": value}
+                            for section, values in config.items() if isinstance(values, dict)
+                            for key, value in values.items()
+                        ]
+                        st.dataframe(pd.DataFrame(config_rows), hide_index=True, use_container_width=True)
+
+            elif result_kind == "comparison_summary":
+                st.markdown("#### Paired comparison summary")
+                st.caption(f"{data_to_show.get('num_seeds', '—')} paired runs · same seed and topology for both algorithms")
+                display_saved_comparison(data_to_show, summary=True)
+
+            elif result_kind == "comparison_pair":
+                st.markdown(f"#### Paired run {data_to_show.get('run_index', '')}".strip())
+                display_saved_comparison(data_to_show, summary=False)
+
             else:
-                st.markdown('<div class="section-title">Raw Result Data</div>', unsafe_allow_html=True)
-                st.json(data_to_show)
+                st.warning("This JSON file does not match a known simulation result format.")
+
+            if selected_file is not None:
+                st.caption(f"Saved at `{selected_file}`")
+            with st.expander("View raw JSON", expanded=False):
+                st.json(data_to_show, expanded=False)
+            st.download_button(
+                "Download this JSON",
+                data=json.dumps(data_to_show, indent=2),
+                file_name=title if title.lower().endswith(".json") else f"{title}.json",
+                mime="application/json",
+                key="download_selected_result",
+            )
 
 
 if __name__ == "__main__":

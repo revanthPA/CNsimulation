@@ -20,6 +20,14 @@ class TestDashboardImports:
 class TestDashboardFunctions:
     """Test dashboard helper functions."""
 
+    def test_classify_saved_result_formats(self):
+        from energy_routing.dashboard import classify_result_data
+
+        assert classify_result_data({"round_metrics": [], "fnd": None}) == "single"
+        assert classify_result_data({"comparison": {"shortest_path": {}}}) == "comparison_summary"
+        assert classify_result_data({"shortest_path": {}, "energy_aware": {}}) == "comparison_pair"
+        assert classify_result_data({"message": "unrecognized"}) == "raw"
+
     def test_plot_to_streamlit(self):
         """Test plot_to_streamlit function."""
         import matplotlib

@@ -226,5 +226,192 @@ class TestDashboardComparison:
         assert results["energy_aware"][0]['fnd'] == 150
 
 
+class TestDashboardValidation:
+    """Test dashboard input validation rules."""
+
+    def test_valid_parameters(self):
+        """Test that valid parameters produce zero validation errors."""
+        from energy_routing.dashboard import validate_simulation_parameters
+        errors = validate_simulation_parameters(
+            num_nodes=50,
+            comm_range=20.0,
+            initial_energy=1.0,
+            num_rounds=1000,
+            seed=42,
+            algorithm="shortest_path"
+        )
+        assert len(errors) == 0
+
+    def test_valid_energy_aware_parameters(self):
+        """Test valid energy-aware weights sum to 1.0."""
+        from energy_routing.dashboard import validate_simulation_parameters
+        errors = validate_simulation_parameters(
+            num_nodes=50,
+            comm_range=20.0,
+            initial_energy=1.0,
+            num_rounds=1000,
+            seed=42,
+            algorithm="energy_aware",
+            alpha=0.4,
+            beta=0.6
+        )
+        assert len(errors) == 0
+
+    def test_invalid_node_count(self):
+        """Test node count < 2 triggers error."""
+        from energy_routing.dashboard import validate_simulation_parameters
+        errors = validate_simulation_parameters(
+            num_nodes=1,
+            comm_range=20.0,
+            initial_energy=1.0,
+            num_rounds=1000,
+            seed=42,
+            algorithm="shortest_path"
+        )
+        assert any("sensor nodes must be at least 2" in e for e in errors)
+
+    def test_invalid_comm_range_and_energy(self):
+        """Test non-positive range and energy trigger errors."""
+        from energy_routing.dashboard import validate_simulation_parameters
+        errors = validate_simulation_parameters(
+            num_nodes=10,
+            comm_range=0.0,
+            initial_energy=-1.0,
+            num_rounds=1000,
+            seed=42,
+            algorithm="shortest_path"
+        )
+        assert any("Communication range" in e for e in errors)
+        assert any("Initial energy" in e for e in errors)
+
+    def test_invalid_alpha_beta_sum(self):
+        """Test alpha + beta != 1.0 triggers error."""
+        from energy_routing.dashboard import validate_simulation_parameters
+        errors = validate_simulation_parameters(
+            num_nodes=10,
+            comm_range=20.0,
+            initial_energy=1.0,
+            num_rounds=100,
+            seed=42,
+            algorithm="energy_aware",
+            alpha=0.7,
+            beta=0.7
+        )
+        assert any("must sum to 1.0" in e for e in errors)
+
+    def test_invalid_alpha_beta_bounds(self):
+        """Test alpha or beta out of [0, 1] triggers error."""
+        from energy_routing.dashboard import validate_simulation_parameters
+        errors = validate_simulation_parameters(
+            num_nodes=10,
+            comm_range=20.0,
+            initial_energy=1.0,
+            num_rounds=100,
+            seed=42,
+            algorithm="energy_aware",
+            alpha=-0.2,
+            beta=1.2
+        )
+        assert any("Alpha" in e for e in errors)
+        assert any("Beta" in e for e in errors)
+
+
+class TestDashboardMetricFormatting:
+    """Test lifetime metric formatting."""
+
+    def test_format_lifetime_metric_observed(self):
+        from energy_routing.dashboard import format_lifetime_metric
+        assert format_lifetime_metric(142) == "Round 142"
+
+    def test_format_lifetime_metric_unobserved(self):
+        from energy_routing.dashboard import format_lifetime_metric
+        assert format_lifetime_metric(None) == "Not observed"
+        assert format_lifetime_metric(None, max_rounds=1000) == "Not observed (>1000 rounds)"
+
+
+class TestDashboardFileHandling:
+    """Test saved result discovery and loading."""
+
+    def test_find_saved_result_files(self, tmp_path):
+        from energy_routing.dashboard import find_saved_result_files
+        # Create a dummy json file
+        test_file = tmp_path / "test_result.json"
+        test_file.write_text('{"fnd": 50}', encoding="utf-8")
+
+        found = find_saved_result_files(str(tmp_path))
+        assert len(found) == 1
+        assert found[0].name == "test_result.json"
+
+    def test_load_result_file_valid(self, tmp_path):
+        from energy_routing.dashboard import load_result_file
+        test_file = tmp_path / "valid.json"
+        test_file.write_text('{"packet_delivery_ratio": 0.95}', encoding="utf-8")
+
+        data, err = load_result_file(test_file)
+        assert err is None
+        assert data["packet_delivery_ratio"] == 0.95
+
+    def test_load_result_file_missing(self, tmp_path):
+        from energy_routing.dashboard import load_result_file
+        missing = tmp_path / "does_not_exist.json"
+        data, err = load_result_file(missing)
+        assert data is None
+        assert "not found" in err.lower()
+
+    def test_load_result_file_invalid_json(self, tmp_path):
+        from energy_routing.dashboard import load_result_file
+        broken = tmp_path / "broken.json"
+        broken.write_text('{not valid json', encoding="utf-8")
+        data, err = load_result_file(broken)
+        assert data is None
+        assert "invalid json" in err.lower()
+
+
+class TestDashboardPlotting:
+    """Test matplotlib figure generation functions."""
+
+    def test_plot_simulation_metrics(self):
+        from energy_routing.dashboard import plot_simulation_metrics
+        mock_result = {
+            "round_metrics": [
+                {"round": 0, "alive_nodes": 10, "total_remaining_energy": 10.0},
+                {"round": 1, "alive_nodes": 9, "total_remaining_energy": 8.5},
+            ],
+            "fnd": 1
+        }
+        fig = plot_simulation_metrics(mock_result)
+        assert fig is not None
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+    def test_plot_simulation_metrics_empty(self):
+        from energy_routing.dashboard import plot_simulation_metrics
+        assert plot_simulation_metrics({}) is None
+
+    def test_plot_comparison_results(self):
+        from energy_routing.dashboard import plot_comparison_results
+        sp_runs = [{"fnd": 100, "packet_delivery_ratio": 0.8}]
+        ea_runs = [{"fnd": 150, "packet_delivery_ratio": 0.85}]
+        fig = plot_comparison_results(sp_runs, ea_runs)
+        assert fig is not None
+        import matplotlib.pyplot as plt
+        plt.close(fig)
+
+
+class TestCoreIndependence:
+    """Verify core simulation and CLI are independent from the dashboard."""
+
+    def test_create_simulator_without_dashboard(self):
+        from energy_routing.config import load_config
+        from energy_routing.simulation import create_simulator
+        settings = load_config("configs/test_quick.yaml")
+        sim = create_simulator(settings)
+        assert sim is not None
+
+    def test_main_cli_importable(self):
+        import energy_routing.main
+        assert callable(energy_routing.main.run_simulation)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

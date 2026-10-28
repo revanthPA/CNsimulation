@@ -157,6 +157,18 @@ def generate_visualizations(result, settings, output_dir: Path):
         print(f"Warning: Failed to generate visualizations: {e}")
 
 
+def launch_gui(port: int = 8501):
+    """Launch the Streamlit GUI."""
+    import subprocess
+    dashboard_path = Path(__file__).parent / "dashboard.py"
+    print(f"Launching Streamlit GUI from {dashboard_path} (port {port})...")
+    cmd = [sys.executable, "-m", "streamlit", "run", str(dashboard_path), "--server.port", str(port)]
+    try:
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        print("\nGUI stopped by user.")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Energy-Aware Routing Protocol for WSN - Simulation CLI"
@@ -176,6 +188,10 @@ def main():
     
     # List experiments command
     subparsers.add_parser('list-experiments', help='List available experiments')
+
+    # Launch GUI command
+    gui_parser = subparsers.add_parser('gui', help='Launch Streamlit GUI')
+    gui_parser.add_argument('--port', '-p', type=int, default=8501, help='Port to run Streamlit on (default: 8501)')
     
     args = parser.parse_args()
     
@@ -185,6 +201,8 @@ def main():
         run_experiment_cmd(args.name, args.base_config, args.output)
     elif args.command == 'list-experiments':
         list_experiments_cmd()
+    elif args.command == 'gui':
+        launch_gui(args.port)
     else:
         parser.print_help()
         sys.exit(1)

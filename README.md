@@ -44,7 +44,68 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt  # For development
 ```
 
-### Run a Simulation
+### Windows startup guide
+
+For Python setup, the first dashboard launch, running simulations, comparisons, and troubleshooting, see [docs/STARTUP_GUIDE_WINDOWS.md](docs/STARTUP_GUIDE_WINDOWS.md). Once dependencies are installed, Windows users can double-click `start_dashboard.bat` to launch the dashboard.
+
+### Interactive Web GUI (Streamlit)
+
+A clean, interactive interface is provided to configure, run, compare, and visualize simulations without editing configuration files or operating the terminal:
+
+```bash
+# Launch directly with Streamlit (Recommended)
+streamlit run src/energy_routing/dashboard.py
+
+# Or via Python module
+python -m streamlit run src/energy_routing/dashboard.py
+
+# Or via the CLI launcher
+python -m energy_routing.main gui
+
+# Or using the run.sh wrapper (Linux / Mac / WSL)
+./run.sh gui
+```
+
+The GUI consists of three main sections:
+- **Section A — Run Simulation**: Configure node count, range, energy, rounds, seed, and routing algorithm (Shortest-Path or Energy-Aware with $\alpha$/$\beta$ weights). View key metrics (FND, HND, LND, PDR, packets, alive nodes) and operational curves.
+- **Section B — Compare Algorithms**: Run paired comparisons across multiple seeds under identical topology and traffic conditions. View summary tables, per-seed win/tie/loss outcomes, and side-by-side charts.
+- **Section C — View Previous Results**: Browse saved results from the `results/` directory or upload a result file to inspect configurations, metrics, and reconstructed charts.
+
+New results from the GUI are saved automatically to `results/dashboard/single_runs/` and `results/dashboard/comparisons/` with unique timestamped filenames to prevent overwriting existing data.
+
+### Quick Start (Recommended)
+
+Use the `run.sh` convenience wrapper:
+
+```bash
+# Make it executable (one-time)
+chmod +x run.sh
+
+# Launch the interactive GUI
+./run.sh gui
+
+# Run a single simulation with default config
+./run.sh run
+
+# Run with a different config
+./run.sh run configs/small.yaml
+
+# Run the routing comparison experiment
+./run.sh experiment
+
+# List all available experiments
+./run.sh list
+
+# Run the full test suite
+./run.sh test
+
+# Show help
+./run.sh help
+```
+
+### Manual Commands
+
+If you prefer to run commands directly:
 
 ```bash
 # Run single simulation
@@ -55,16 +116,12 @@ python -m energy_routing.main experiment --name routing_comparison --base-config
 
 # List available experiments
 python -m energy_routing.main list-experiments
-```
 
-### Run Tests
+# Launch GUI
+python -m energy_routing.main gui
 
-```bash
 # Run all tests
 pytest tests/ -v
-
-# Run tests for specific module
-pytest tests/test_models/ -v
 ```
 
 ## Project Structure
@@ -74,15 +131,18 @@ energy-aware-routing/
 ├── configs/              # Configuration files
 ├── docs/                # Documentation
 ├── results/             # Simulation results
+├── scripts/             # Utility scripts
+│   └── sensitivity_study.py  # Robustness sensitivity study
 ├── src/energy_routing/  # Source code
 │   ├── models/          # Domain models
 │   ├── network/         # Network topology
 │   ├── routing/         # Routing algorithms
 │   ├── simulation/      # Simulation engine
 │   ├── metrics/         # Metric collection
-│   ├── experiments/     # Experiment execution
-│   └── visualization/    # Plotting
-└── tests/               # Automated tests
+│   └── experiments/     # Experiment execution
+├── tests/               # Automated tests
+├── run.sh               # Convenience wrapper script
+└── ...
 ```
 
 ## Configuration

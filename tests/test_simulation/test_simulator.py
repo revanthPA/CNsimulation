@@ -4,6 +4,7 @@ Tests for the Simulator class.
 
 import pytest
 import networkx as nx
+from unittest.mock import Mock
 from energy_routing.simulation.simulator import Simulator, create_simulator
 from energy_routing.simulation.energy_model import EnergyModel
 from energy_routing.routing.shortest_path import ShortestPathRouting
@@ -587,6 +588,20 @@ class TestPacketRouting:
         # If not, it should be lost
         # Either way, should not crash
         assert delivered in (True, False)
+
+    def test_route_is_selected_once_for_the_full_packet(self):
+        simulator = create_simulator(self.settings)
+        base_station = simulator.topology.base_station_id
+        simulator.graph.add_edge(0, 1, distance=5.0)
+        simulator.graph.add_edge(1, base_station, distance=5.0)
+        simulator.routing_strategy.find_path = Mock(return_value=(0, 1, base_station))
+        simulator._deliver_hop = Mock(return_value=True)
+
+        delivered = simulator._route_packet(simulator._generate_packet(0))
+
+        assert delivered is True
+        simulator.routing_strategy.find_path.assert_called_once()
+        assert simulator.delivered_packets[-1].path == (0, 1, base_station)
 
 
 class TestRoundMetricsCollection:

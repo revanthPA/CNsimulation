@@ -315,6 +315,23 @@ class TestDashboardValidation:
         assert any("Alpha" in e for e in errors)
         assert any("Beta" in e for e in errors)
 
+    def test_invalid_advanced_network_and_packet_parameters(self):
+        from energy_routing.dashboard import validate_simulation_parameters
+
+        errors = validate_simulation_parameters(
+            num_nodes=10, comm_range=20.0, initial_energy=1.0,
+            num_rounds=100, seed=42, algorithm="shortest_path",
+            area_width=10.0, area_height=10.0,
+            base_station_x=11.0, base_station_y=5.0,
+            packets_per_round=-1, packet_size=0, E_elec=-1.0, E_amp=-0.1,
+        )
+
+        assert any("Base station X" in error for error in errors)
+        assert any("Packets per node" in error for error in errors)
+        assert any("Packet size" in error for error in errors)
+        assert any("Electronics energy" in error for error in errors)
+        assert any("Amplifier energy" in error for error in errors)
+
 
 class TestDashboardMetricFormatting:
     """Test lifetime metric formatting."""

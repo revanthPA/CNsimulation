@@ -35,6 +35,17 @@ This guide gets the Energy-Aware Routing Protocol simulator running on Windows a
 
    This installs Streamlit and the simulation libraries, then registers the project so its CLI and dashboard can import the code. You do not need to activate the environment to use the launcher.
 
+   If the launcher says `.venv` exists but Python cannot start, that environment
+   was likely copied from a different computer or Python installation. Recreate
+   it from this project folder, then reinstall dependencies:
+
+   ```powershell
+   Remove-Item -Recurse -Force .venv
+   py -3.12 -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   .\.venv\Scripts\python.exe -m pip install -e .
+   ```
+
 ## Start the dashboard
 
 Double-click **`start_dashboard.bat`** in the project folder. A console window starts the dashboard and Streamlit opens it in your browser. If it does not open automatically, visit [http://localhost:8501](http://localhost:8501).

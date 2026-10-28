@@ -21,6 +21,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 import matplotlib
 matplotlib.use('Agg')
@@ -28,6 +29,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import streamlit as st
+import yaml
 
 from energy_routing.config import (
     EnergyConfig,
@@ -37,10 +39,15 @@ from energy_routing.config import (
     SimulationParameters,
     SimulationSettings,
     load_config,
+    settings_from_dict,
+    settings_to_dict,
 )
 from energy_routing.experiments import ExperimentRunner
-from energy_routing.experiments.runner import Experiment
+from energy_routing.experiments.runner import Experiment, write_json_atomic
 from energy_routing.simulation import create_simulator
+from energy_routing.metrics.paired import compare_paired_lifetimes
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +63,14 @@ def validate_simulation_parameters(
     algorithm: str,
     alpha: float = 0.5,
     beta: float = 0.5,
+    area_width: Optional[float] = None,
+    area_height: Optional[float] = None,
+    base_station_x: Optional[float] = None,
+    base_station_y: Optional[float] = None,
+    packets_per_round: Optional[int] = None,
+    packet_size: Optional[int] = None,
+    E_elec: Optional[float] = None,
+    E_amp: Optional[float] = None,
 ) -> List[str]:
     """
     Validate user inputs against domain constraints.
@@ -74,6 +89,22 @@ def validate_simulation_parameters(
         errors.append("Number of rounds must be at least 1.")
     if seed < 0:
         errors.append("Random seed must be non-negative.")
+    if area_width is not None and area_width <= 0:
+        errors.append("Area width must be greater than 0 meters.")
+    if area_height is not None and area_height <= 0:
+        errors.append("Area height must be greater than 0 meters.")
+    if base_station_x is not None and area_width is not None and not 0 <= base_station_x <= area_width:
+        errors.append("Base station X must be within the network area.")
+    if base_station_y is not None and area_height is not None and not 0 <= base_station_y <= area_height:
+        errors.append("Base station Y must be within the network area.")
+    if packets_per_round is not None and packets_per_round < 0:
+        errors.append("Packets per node per round must be non-negative.")
+    if packet_size is not None and packet_size < 1:
+        errors.append("Packet size must be at least 1 byte.")
+    if E_elec is not None and E_elec < 0:
+        errors.append("Electronics energy must be non-negative.")
+    if E_amp is not None and E_amp < 0:
+        errors.append("Amplifier energy must be non-negative.")
     if algorithm not in ("shortest_path", "energy_aware"):
         errors.append(f"Unsupported routing algorithm: {algorithm}")
     if algorithm == "energy_aware":
@@ -109,14 +140,13 @@ def run_single_simulation(
     result_dict = result.to_dict()
 
     # Automatically save to a non-colliding location if requested or default
-    target_dir = Path(output_dir or "results/dashboard/single_runs")
+    target_dir = Path(output_dir) if output_dir else PROJECT_ROOT / "results/dashboard/single_runs"
     target_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S%f") + "_" + uuid4().hex[:8]
     algo = settings.routing.algorithm
     seed = settings.network.seed
     result_path = target_dir / f"sim_{algo}_seed{seed}_{timestamp}.json"
-    with open(result_path, "w", encoding="utf-8") as f:
-        json.dump(result_dict, f, indent=2)
+    write_json_atomic(result_path, result_dict)
     result_dict["_saved_filepath"] = str(result_path)
 
     return result_dict
@@ -128,6 +158,7 @@ def run_comparison_experiment(
     output_dir: Optional[str] = None,
     alpha: float = 0.5,
     beta: float = 0.5,
+    progress_callback=None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Execute a paired comparison experiment across multiple seeds.
@@ -145,7 +176,7 @@ def run_comparison_experiment(
         },
     )
 
-    save_dir = output_dir or "results/dashboard/comparisons"
+    save_dir = output_dir or str(PROJECT_ROOT / "results/dashboard/comparisons")
     runner = ExperimentRunner(output_dir=save_dir)
     results = runner.run_comparison(
         exp,
@@ -153,6 +184,7 @@ def run_comparison_experiment(
         algorithm_b="energy_aware",
         alpha=alpha,
         beta=beta,
+        progress_callback=progress_callback,
     )
 
     return {
@@ -270,8 +302,8 @@ def plot_comparison_results(
     n = min(len(results_a), len(results_b))
     seeds = [r.get("config", {}).get("network", {}).get("seed", i + 1) for i, r in enumerate(results_a[:n])]
 
-    fnd_a = [r.get("fnd") if r.get("fnd") is not None else 0 for r in results_a[:n]]
-    fnd_b = [r.get("fnd") if r.get("fnd") is not None else 0 for r in results_b[:n]]
+    fnd_a = [r.get("fnd") if r.get("fnd") is not None else np.nan for r in results_a[:n]]
+    fnd_b = [r.get("fnd") if r.get("fnd") is not None else np.nan for r in results_b[:n]]
     pdr_a = [r.get("packet_delivery_ratio", 0.0) for r in results_a[:n]]
     pdr_b = [r.get("packet_delivery_ratio", 0.0) for r in results_b[:n]]
 
@@ -323,6 +355,8 @@ def plot_comparison_results(
 def find_saved_result_files(base_dir: str = "results") -> List[Path]:
     """Recursively discover all valid JSON result files in the results directory."""
     root = Path(base_dir)
+    if not root.is_absolute():
+        root = PROJECT_ROOT / root
     if not root.exists():
         return []
 
@@ -569,17 +603,40 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Default settings baseline
-    try:
-        default_settings = load_config("configs/base.yaml")
-    except Exception:
-        default_settings = SimulationSettings(
-            network=NetworkConfig(num_nodes=50, area_width=100.0, area_height=100.0, communication_range=20.0, seed=42, base_station_x=50.0, base_station_y=50.0),
-            energy=EnergyConfig(initial_energy=1.0, E_elec=50.0, E_amp=0.0013, packet_size=512),
-            simulation=SimulationParameters(num_rounds=1000, packets_per_round=1, packet_size=512),
-            routing=RoutingConfig(algorithm="shortest_path", alpha=0.5, beta=0.5),
-            output=OutputConfig(results_dir="results", save_results=True),
+    config_dir = PROJECT_ROOT / "configs"
+    config_files = sorted(config_dir.glob("*.yaml")) + sorted(config_dir.glob("*.yml"))
+    if not config_files:
+        st.error(f"No YAML configurations were found in {config_dir}.")
+        st.stop()
+
+    base_index = next((i for i, path in enumerate(config_files) if path.name == "base.yaml"), 0)
+    config_col, upload_col = st.columns([1, 1])
+    with config_col:
+        selected_config = st.selectbox(
+            "Starting configuration",
+            config_files,
+            index=base_index,
+            format_func=lambda path: path.name,
+            help="Choose a documented project configuration as the starting point for a run.",
         )
+    with upload_col:
+        uploaded_config = st.file_uploader(
+            "Or load a YAML configuration",
+            type=["yaml", "yml"],
+            help="Uploaded configurations are read for this session and are not written over project files.",
+        )
+
+    try:
+        default_settings = load_config(selected_config)
+        if uploaded_config is not None:
+            parsed_config = yaml.safe_load(uploaded_config.getvalue())
+            default_settings = settings_from_dict(parsed_config)
+            st.caption(f"Using uploaded configuration: {uploaded_config.name}")
+        else:
+            st.caption(f"Loaded project configuration: {selected_config.name}")
+    except Exception as error:
+        st.error(f"Could not load that configuration. Check its YAML syntax and required fields. Details: {error}")
+        st.stop()
 
     # First-run orientation: keep the existing simulation workflow visible after a short overview.
     with st.container(border=True):
@@ -680,11 +737,58 @@ def main():
             else:
                 alpha, beta = 0.5, 0.5
 
+            with st.expander("Advanced network, packet, and radio settings"):
+                adv_network = st.columns(4)
+                with adv_network[0]:
+                    area_width = st.number_input(
+                        "Area Width (m)", min_value=1.0,
+                        value=float(default_settings.network.area_width), step=10.0,
+                    )
+                with adv_network[1]:
+                    area_height = st.number_input(
+                        "Area Height (m)", min_value=1.0,
+                        value=float(default_settings.network.area_height), step=10.0,
+                    )
+                with adv_network[2]:
+                    base_station_x = st.number_input(
+                        "Base Station X (m)", min_value=0.0,
+                        value=float(default_settings.network.base_station_x), step=5.0,
+                    )
+                with adv_network[3]:
+                    base_station_y = st.number_input(
+                        "Base Station Y (m)", min_value=0.0,
+                        value=float(default_settings.network.base_station_y), step=5.0,
+                    )
+
+                adv_packet = st.columns(4)
+                with adv_packet[0]:
+                    packets_per_round = st.number_input(
+                        "Packets per Node per Round", min_value=0, max_value=1000,
+                        value=int(default_settings.simulation.packets_per_round), step=1,
+                    )
+                with adv_packet[1]:
+                    packet_size = st.number_input(
+                        "Packet Size (bytes)", min_value=1, max_value=65536,
+                        value=int(default_settings.simulation.packet_size), step=64,
+                    )
+                with adv_packet[2]:
+                    E_elec = st.number_input(
+                        "Electronics Energy (nJ/bit)", min_value=0.0, max_value=10000.0,
+                        value=float(default_settings.energy.E_elec), step=5.0,
+                    )
+                with adv_packet[3]:
+                    E_amp = st.number_input(
+                        "Amplifier Energy (nJ/bit/m²)", min_value=0.0, max_value=1.0,
+                        value=float(default_settings.energy.E_amp), step=0.0001, format="%.4f",
+                    )
+
             submit_sim = st.form_submit_button("Run Simulation", type="primary", use_container_width=True)
 
         if submit_sim:
             validation_errors = validate_simulation_parameters(
-                num_nodes, comm_range, initial_energy, num_rounds, seed, algo_code, alpha, beta
+                num_nodes, comm_range, initial_energy, num_rounds, seed, algo_code, alpha, beta,
+                area_width, area_height, base_station_x, base_station_y,
+                packets_per_round, packet_size, E_elec, E_amp,
             )
             if validation_errors:
                 for err in validation_errors:
@@ -693,12 +797,22 @@ def main():
                 sim_settings = copy.deepcopy(default_settings)
                 sim_settings.network.num_nodes = num_nodes
                 sim_settings.network.communication_range = comm_range
+                sim_settings.network.area_width = area_width
+                sim_settings.network.area_height = area_height
+                sim_settings.network.base_station_x = base_station_x
+                sim_settings.network.base_station_y = base_station_y
                 sim_settings.energy.initial_energy = initial_energy
+                sim_settings.energy.E_elec = E_elec
+                sim_settings.energy.E_amp = E_amp
+                sim_settings.energy.packet_size = packet_size
                 sim_settings.simulation.num_rounds = num_rounds
+                sim_settings.simulation.packets_per_round = packets_per_round
+                sim_settings.simulation.packet_size = packet_size
                 sim_settings.network.seed = seed
                 sim_settings.routing.algorithm = algo_code
                 sim_settings.routing.alpha = alpha
                 sim_settings.routing.beta = beta
+                st.session_state["single_run_config"] = settings_to_dict(sim_settings)
 
                 with st.spinner(f"Executing simulation ({num_nodes} nodes, up to {num_rounds} rounds, algorithm: {algorithm_label})..."):
                     try:
@@ -712,9 +826,19 @@ def main():
         # Display Single Simulation Results
         if "single_sim_result" in st.session_state:
             res = st.session_state["single_sim_result"]
+            effective_config = st.session_state.get("single_run_config", res.get("config", {}))
             st.divider()
             st.markdown('<div class="section-title">Simulation Results Summary</div>', unsafe_allow_html=True)
             display_simulation_results(res)
+
+            with st.expander("Effective simulation configuration"):
+                st.json(effective_config)
+            st.download_button(
+                label="Download Effective Configuration (YAML)",
+                data=yaml.safe_dump(effective_config, sort_keys=False),
+                file_name=f"simulation_config_seed{res.get('config', {}).get('network', {}).get('seed', 'run')}.yaml",
+                mime="application/yaml",
+            )
 
             fig = plot_simulation_metrics(res)
             if fig:
@@ -783,18 +907,29 @@ def main():
             comp_settings.simulation.num_rounds = comp_rounds
             comp_settings.network.seed = comp_start_seed
 
-            with st.spinner(f"Executing paired comparison across {comp_num_seeds} seeds (2 x {comp_num_seeds} simulations)..."):
+            progress_bar = st.progress(0.0, text=f"Starting {comp_num_seeds} paired seed runs…")
+
+            def report_pair_progress(completed: int, total: int) -> None:
+                progress_bar.progress(
+                    completed / total,
+                    text=f"Completed {completed} of {total} paired seeds ({2 * completed} of {2 * total} simulations).",
+                )
+
+            with st.spinner(f"Running paired comparison across {comp_num_seeds} seeds…"):
                 try:
                     comp_results = run_comparison_experiment(
                         base_settings=comp_settings,
                         num_seeds=comp_num_seeds,
                         alpha=comp_alpha,
                         beta=comp_beta,
+                        progress_callback=report_pair_progress,
                     )
                     st.session_state["comparison_results"] = comp_results
                     st.success(f"Comparison completed successfully across {comp_num_seeds} paired seeds.")
                 except Exception as e:
                     st.error(f"Experiment execution failed: {e}")
+                finally:
+                    progress_bar.empty()
 
         # Display Comparison Table and Chart
         if "comparison_results" in st.session_state:
@@ -867,6 +1002,11 @@ def main():
                         "Better Lifetime": outcome,
                     })
 
+                paired_lifetime = compare_paired_lifetimes(
+                    sp_runs[:n_seeds], ea_runs[:n_seeds],
+                    label_a="shortest_path", label_b="energy_aware",
+                )
+
                 # High-level outcome summary banner
                 st.markdown(
                     f'<div class="outcome-box">'
@@ -879,8 +1019,8 @@ def main():
                 )
 
                 # Aggregate summary table
-                sp_mean_fnd = np.mean(sp_fnds) if sp_fnds else "Not observed"
-                ea_mean_fnd = np.mean(ea_fnds) if ea_fnds else "Not observed"
+                sp_mean_fnd = paired_lifetime["restricted_mean_fnd_a"]
+                ea_mean_fnd = paired_lifetime["restricted_mean_fnd_b"]
                 sp_mean_pdr = np.mean(sp_pdrs) if sp_pdrs else 0.0
                 ea_mean_pdr = np.mean(ea_pdrs) if ea_pdrs else 0.0
                 sp_mean_eng = np.mean(sp_energies) if sp_energies else 0.0
@@ -888,10 +1028,22 @@ def main():
 
                 summary_df = pd.DataFrame([
                     {
-                        "Performance Metric": "Mean First Node Death (FND)",
+                        "Performance Metric": f"Restricted Mean FND (≤ {paired_lifetime['horizon_rounds']} rounds)",
                         "Shortest Path": f"{sp_mean_fnd:.1f} rounds" if isinstance(sp_mean_fnd, float) else str(sp_mean_fnd),
                         "Energy-Aware": f"{ea_mean_fnd:.1f} rounds" if isinstance(ea_mean_fnd, float) else str(ea_mean_fnd),
                         "Difference (EA - SP)": f"{(ea_mean_fnd - sp_mean_fnd):+.1f} rounds" if isinstance(sp_mean_fnd, float) and isinstance(ea_mean_fnd, float) else "N/A",
+                    },
+                    {
+                        "Performance Metric": "Paired restricted FND difference (95% bootstrap CI)",
+                        "Shortest Path": f"FND unobserved in {paired_lifetime['censored_a']}/{n_seeds} seeds",
+                        "Energy-Aware": f"FND unobserved in {paired_lifetime['censored_b']}/{n_seeds} seeds",
+                        "Difference (EA - SP)": (
+                            f"{paired_lifetime['mean_paired_difference']:+.1f} rounds "
+                            f"[{paired_lifetime['bootstrap_95_ci'][0]:+.1f}, "
+                            f"{paired_lifetime['bootstrap_95_ci'][1]:+.1f}]"
+                            if paired_lifetime["bootstrap_95_ci"] is not None
+                            else f"{paired_lifetime['mean_paired_difference']:+.1f} rounds (1 pair; no interval)"
+                        ),
                     },
                     {
                         "Performance Metric": "Mean Packet Delivery Ratio (PDR)",

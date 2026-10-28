@@ -33,7 +33,7 @@ class TestLoadConfigMissingFile:
             f.write("")
             tmp_path = f.name
         try:
-            with pytest.raises((TypeError, KeyError)):
+            with pytest.raises(ValueError, match="Configuration must be a YAML mapping"):
                 load_config(tmp_path)
         finally:
             os.unlink(tmp_path)
@@ -44,7 +44,7 @@ class TestLoadConfigMissingFile:
             f.write("energy:\n  initial_energy: 1.0\n")
             tmp_path = f.name
         try:
-            with pytest.raises(KeyError):
+            with pytest.raises(ValueError, match="missing required section"):
                 load_config(tmp_path)
         finally:
             os.unlink(tmp_path)
@@ -157,15 +157,13 @@ class TestConfigValidation:
 
     def test_routing_config_alpha_out_of_range(self):
         """Test that alpha outside [0,1] raises ValueError."""
-        with pytest.raises(ValueError, match="alpha must be in \[0, 1\]"):
+        with pytest.raises(ValueError, match=r"alpha must be in \[0, 1\]"):
             RoutingConfig(
                 algorithm="energy_aware", alpha=1.5, beta=-0.5
             )
 
     def test_routing_config_literal_type_hint(self):
-        """Test that algorithm field accepts Literal values (type hint only, not runtime enforced)."""
-        # Literal["shortest_path", "energy_aware"] is a type hint, not runtime validation
-        # Any string is accepted at runtime; callers are responsible for valid values
+        """Test that only supported routing strategies are accepted at runtime."""
         config = RoutingConfig(
             algorithm="shortest_path", alpha=0.5, beta=0.5
         )
@@ -174,6 +172,16 @@ class TestConfigValidation:
             algorithm="energy_aware", alpha=0.5, beta=0.5
         )
         assert config.algorithm == "energy_aware"
+        with pytest.raises(ValueError, match="algorithm must be"):
+            RoutingConfig(algorithm="unknown", alpha=0.5, beta=0.5)
+
+    def test_base_station_must_be_inside_network_area(self):
+        with pytest.raises(ValueError, match="base_station_x must be within"):
+            NetworkConfig(
+                num_nodes=10, area_width=50.0, area_height=50.0,
+                communication_range=20.0, seed=42,
+                base_station_x=51.0, base_station_y=25.0,
+            )
 
     def test_save_config_roundtrip(self):
         """Test that save_config then load_config produces equivalent settings."""

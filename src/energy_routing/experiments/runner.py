@@ -5,14 +5,39 @@ Defines experiment classes and runner for executing controlled comparisons.
 """
 
 import copy
+import os
+import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Callable
 from pathlib import Path
 import json
+from uuid import uuid4
 
 from energy_routing.config import SimulationSettings
 from energy_routing.simulation import create_simulator
 from energy_routing.models.result import SimulationResult
+from energy_routing.metrics.paired import compare_paired_lifetimes
+
+
+def write_json_atomic(filepath: Path, data: Any) -> None:
+    """Atomically write JSON so readers never observe a partial result file."""
+    filepath = Path(filepath)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=filepath.parent,
+            prefix=f".{filepath.name}.", suffix=".tmp", delete=False,
+        ) as stream:
+            temp_path = Path(stream.name)
+            json.dump(data, stream, indent=2, default=str)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, filepath)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
 
 
 @dataclass
@@ -125,6 +150,11 @@ class ExperimentRunner:
         self.raw_dir.mkdir(parents=True, exist_ok=True)
         self.summary_dir = self.output_dir / "summary"
         self.summary_dir.mkdir(parents=True, exist_ok=True)
+        self.run_id = self._new_run_id()
+
+    @staticmethod
+    def _new_run_id() -> str:
+        return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_" + uuid4().hex[:8]
     
     def run_experiment(self, experiment: Experiment) -> List[SimulationResult]:
         """
@@ -136,6 +166,7 @@ class ExperimentRunner:
         Returns:
             List of SimulationResult objects
         """
+        self.run_id = self._new_run_id()
         configs = experiment.generate_configs()
         results = []
         
@@ -165,7 +196,8 @@ class ExperimentRunner:
         algorithm_a: str = "shortest_path",
         algorithm_b: str = "energy_aware",
         alpha: float = 0.5,
-        beta: float = 0.5
+        beta: float = 0.5,
+        progress_callback: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, List[SimulationResult]]:
         """
         Run a routing algorithm comparison experiment.
@@ -183,6 +215,7 @@ class ExperimentRunner:
         Returns:
             Dict with 'algorithm_a' and 'algorithm_b' result lists
         """
+        self.run_id = self._new_run_id()
         # Generate base configs (seeds only)
         base_configs = experiment.generate_configs()
         
@@ -215,6 +248,8 @@ class ExperimentRunner:
             
             # Save pair
             self._save_comparison_pair(result_a, result_b, experiment.name, i, algorithm_a, algorithm_b)
+            if progress_callback is not None:
+                progress_callback(i + 1, len(base_configs))
         
         # Save comparison summary
         self._save_comparison_summary(results_a, results_b, experiment.name, algorithm_a, algorithm_b)
@@ -226,16 +261,16 @@ class ExperimentRunner:
     
     def _save_result(self, result: SimulationResult, experiment_name: str, run_idx: int):
         """Save individual simulation result to JSON."""
-        filename = f"{experiment_name}_run{run_idx}.json"
+        filename = f"{experiment_name}_{self.run_id}_run{run_idx}.json"
         filepath = self.raw_dir / filename
-        with open(filepath, 'w') as f:
-            json.dump(result.to_dict(), f, indent=2)
+        write_json_atomic(filepath, result.to_dict())
     
     def _save_summary(self, results: List[SimulationResult], experiment_name: str):
         """Save experiment summary."""
         # Compute basic statistics
         summary = {
             "experiment": experiment_name,
+            "run_id": self.run_id,
             "num_runs": len(results),
             "results": []
         }
@@ -256,10 +291,9 @@ class ExperimentRunner:
                 "total_packets_lost": r.total_packets_lost
             })
         
-        filename = f"{experiment_name}_summary.json"
+        filename = f"{experiment_name}_{self.run_id}_summary.json"
         filepath = self.summary_dir / filename
-        with open(filepath, 'w') as f:
-            json.dump(summary, f, indent=2)
+        write_json_atomic(filepath, summary)
     
     def _save_comparison_pair(
         self,
@@ -271,7 +305,7 @@ class ExperimentRunner:
         algo_b: str
     ):
         """Save a comparison pair."""
-        filename = f"{experiment_name}_{algo_a}_vs_{algo_b}_run{run_idx}.json"
+        filename = f"{experiment_name}_{self.run_id}_{algo_a}_vs_{algo_b}_run{run_idx}.json"
         filepath = self.raw_dir / filename
         
         data = {
@@ -281,8 +315,7 @@ class ExperimentRunner:
             algo_b: result_b.to_dict()
         }
         
-        with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+        write_json_atomic(filepath, data)
     
     def _save_comparison_summary(
         self,
@@ -305,18 +338,27 @@ class ExperimentRunner:
         agg_b = collector_b.compute_aggregated_metrics()
         
         comparison = collector_a.compare_algorithms(results_a, results_b, algo_a, algo_b)
+        try:
+            paired_lifetime = compare_paired_lifetimes(
+                results_a, results_b, label_a=algo_a, label_b=algo_b
+            )
+        except ValueError as error:
+            # Preserve outputs from legacy/mocked results, but make the
+            # missing pairing metadata explicit in the saved summary.
+            paired_lifetime = {"unavailable_reason": str(error)}
         
         summary = {
             "experiment": experiment_name,
+            "run_id": self.run_id,
             "algorithm_a": algo_a,
             "algorithm_b": algo_b,
             "num_seeds": len(results_a),
             algo_a: agg_a.__dict__,
             algo_b: agg_b.__dict__,
-            "comparison": comparison
+            "comparison": comparison,
+            "paired_lifetime_analysis": paired_lifetime,
         }
         
-        filename = f"{experiment_name}_{algo_a}_vs_{algo_b}_summary.json"
+        filename = f"{experiment_name}_{self.run_id}_{algo_a}_vs_{algo_b}_summary.json"
         filepath = self.summary_dir / filename
-        with open(filepath, 'w') as f:
-            json.dump(summary, f, indent=2, default=str)
+        write_json_atomic(filepath, summary)

@@ -53,11 +53,10 @@ Where:
 giving energy component 0.0 (base station always preferred as receiver).
 
 **Performance Optimization**: The maximum edge distance (`max_distance`)
-used for distance normalization is cached per graph object. Since edge
-distances are static during simulation and the same alive subgraph is
-reused for all packets within a round, the cached value avoids redundant
-O(E) edge iteration on every `find_path` call. The cache is keyed by
-graph object identity and is valid as long as the same graph is passed.
+used for distance normalization is cached per graph object. Edge distances
+are static, and each packet gets a graph containing currently alive nodes.
+The cache avoids repeated O(E) edge iteration when that graph is searched.
+The cache is keyed by graph object identity and valid for that graph.
 Routing decisions are identical with or without the cache.
 
 ## Energy Model

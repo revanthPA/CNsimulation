@@ -48,6 +48,12 @@ class AggregatedMetrics:
     std_total_route_distance: Optional[float]
     mean_final_energy: float
     std_final_energy: float
+    observed_fnd_runs: int = 0
+    censored_fnd_runs: int = 0
+    observed_hnd_runs: int = 0
+    censored_hnd_runs: int = 0
+    observed_lnd_runs: int = 0
+    censored_lnd_runs: int = 0
 
 
 class MetricsCollector:
@@ -151,7 +157,13 @@ class MetricsCollector:
             mean_pdr=mean_pdr, std_pdr=std_pdr,
             mean_avg_hop_count=mean_hop, std_avg_hop_count=std_hop,
             mean_total_route_distance=mean_dist, std_total_route_distance=std_dist,
-            mean_final_energy=mean_energy, std_final_energy=std_energy
+            mean_final_energy=mean_energy, std_final_energy=std_energy,
+            observed_fnd_runs=sum(value is not None for value in fnd_values),
+            censored_fnd_runs=sum(value is None for value in fnd_values),
+            observed_hnd_runs=sum(value is not None for value in hnd_values),
+            censored_hnd_runs=sum(value is None for value in hnd_values),
+            observed_lnd_runs=sum(value is not None for value in lnd_values),
+            censored_lnd_runs=sum(value is None for value in lnd_values),
         )
     
     def compute_round_aggregates(self) -> Dict[int, Dict[str, float]]:
@@ -253,6 +265,12 @@ class MetricsCollector:
                 "hnd_std": statistics.stdev(hnd) if len(hnd) > 1 else 0.0,
                 "lnd_mean": statistics.mean(lnd) if lnd else None,
                 "lnd_std": statistics.stdev(lnd) if len(lnd) > 1 else 0.0,
+                "fnd_observed_runs": len(fnd),
+                "fnd_censored_runs": len(results) - len(fnd),
+                "hnd_observed_runs": len(hnd),
+                "hnd_censored_runs": len(results) - len(hnd),
+                "lnd_observed_runs": len(lnd),
+                "lnd_censored_runs": len(results) - len(lnd),
                 "pdr_mean": statistics.mean(pdr),
                 "pdr_std": statistics.stdev(pdr) if len(pdr) > 1 else 0.0,
                 "avg_hop_count_mean": statistics.mean(hop) if hop else None,

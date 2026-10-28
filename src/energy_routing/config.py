@@ -5,7 +5,7 @@ Uses dataclasses for type-safe configuration with validation.
 """
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional
 import math
 
 
@@ -43,6 +43,10 @@ class NetworkConfig:
             raise ValueError("communication_range must be > 0")
         if self.seed < 0:
             raise ValueError("seed must be >= 0")
+        if not 0 <= self.base_station_x <= self.area_width:
+            raise ValueError("base_station_x must be within the network area")
+        if not 0 <= self.base_station_y <= self.area_height:
+            raise ValueError("base_station_y must be within the network area")
 
 
 @dataclass
@@ -111,6 +115,8 @@ class RoutingConfig:
 
     def __post_init__(self):
         """Validate routing configuration."""
+        if self.algorithm not in ("shortest_path", "energy_aware"):
+            raise ValueError("algorithm must be 'shortest_path' or 'energy_aware'")
         if self.alpha < 0 or self.alpha > 1:
             raise ValueError("alpha must be in [0, 1]")
         if self.beta < 0 or self.beta > 1:
@@ -178,16 +184,41 @@ def load_config(config_path: str) -> SimulationSettings:
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
     
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         config_data = yaml.safe_load(f)
     
-    return SimulationSettings(
+    return settings_from_dict(config_data)
+
+
+def settings_from_dict(config_data: Dict[str, Any]) -> SimulationSettings:
+    """Validate and build settings from a parsed YAML/JSON mapping."""
+    if not isinstance(config_data, dict):
+        raise ValueError("Configuration must be a YAML mapping with network, energy, simulation, and routing sections.")
+    required = ("network", "energy", "simulation", "routing")
+    missing = [section for section in required if section not in config_data]
+    if missing:
+        raise ValueError(f"Configuration is missing required section(s): {', '.join(missing)}.")
+    try:
+        return SimulationSettings(
         network=NetworkConfig(**config_data["network"]),
         energy=EnergyConfig(**config_data["energy"]),
         simulation=SimulationParameters(**config_data["simulation"]),
         routing=RoutingConfig(**config_data["routing"]),
         output=OutputConfig(**config_data.get("output", {}))
-    )
+        )
+    except (TypeError, KeyError) as error:
+        raise ValueError(f"Configuration fields are invalid: {error}") from error
+
+
+def settings_to_dict(settings: SimulationSettings) -> Dict[str, Dict[str, Any]]:
+    """Return a plain, serializable mapping of all effective settings."""
+    return {
+        "network": dict(settings.network.__dict__),
+        "energy": dict(settings.energy.__dict__),
+        "simulation": dict(settings.simulation.__dict__),
+        "routing": dict(settings.routing.__dict__),
+        "output": dict(settings.output.__dict__),
+    }
 
 
 def save_config(settings: SimulationSettings, output_path: str):
@@ -200,13 +231,5 @@ def save_config(settings: SimulationSettings, output_path: str):
     """
     import yaml
     
-    config_dict = {
-        "network": {k: v for k, v in settings.network.__dict__.items()},
-        "energy": {k: v for k, v in settings.energy.__dict__.items()},
-        "simulation": {k: v for k, v in settings.simulation.__dict__.items()},
-        "routing": {k: v for k, v in settings.routing.__dict__.items()},
-        "output": {k: v for k, v in settings.output.__dict__.items()}
-    }
-    
     with open(output_path, "w") as f:
-        yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)
+        yaml.safe_dump(settings_to_dict(settings), f, default_flow_style=False, sort_keys=False)

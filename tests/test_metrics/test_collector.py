@@ -231,6 +231,12 @@ class TestMetricsCollector:
         metrics = self.collector.compute_aggregated_metrics()
         
         assert metrics.num_runs == 3
+        assert metrics.observed_fnd_runs == 2
+        assert metrics.censored_fnd_runs == 1
+        assert metrics.observed_hnd_runs == 2
+        assert metrics.censored_hnd_runs == 1
+        assert metrics.observed_lnd_runs == 2
+        assert metrics.censored_lnd_runs == 1
         
         # FND: 1, 2, None -> mean = 1.5
         assert metrics.mean_fnd == pytest.approx(1.5)

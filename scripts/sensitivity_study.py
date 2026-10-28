@@ -6,9 +6,19 @@ across varied network conditions. Results written to results/routing_sensitivity
 
 Does NOT modify any simulation code or existing result files.
 """
-import sys, json, time, statistics
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import time
+from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
-sys.path.insert(0, 'src')
+from uuid import uuid4
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from energy_routing.config import (
     SimulationSettings, NetworkConfig, EnergyConfig,
@@ -16,11 +26,10 @@ from energy_routing.config import (
 )
 from energy_routing.simulation import create_simulator
 
-# Output directory (new, does not overwrite existing results)
-OUTPUT_DIR = Path('results/routing_sensitivity')
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-RAW_DIR = OUTPUT_DIR / 'raw'
-RAW_DIR.mkdir(parents=True, exist_ok=True)
+# Every execution gets its own directory; reruns never replace earlier results.
+RUN_ID = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + "_" + uuid4().hex[:8]
+OUTPUT_DIR = PROJECT_ROOT / "results" / "routing_sensitivity" / RUN_ID
+RAW_DIR = OUTPUT_DIR / "raw"
 
 # Base configuration (from configs/base.yaml)
 BASE = {
@@ -86,12 +95,12 @@ SCENARIOS = [
     {
         'name': 'ea_alpha_0.25',
         'description': 'Energy-aware alpha=0.25, beta=0.75 (more energy-focused)',
-        'overrides': {'algorithm': 'energy_aware', 'alpha': 0.25, 'beta': 0.75},
+        'overrides': {'alpha': 0.25, 'beta': 0.75},
     },
     {
         'name': 'ea_alpha_0.75',
         'description': 'Energy-aware alpha=0.75, beta=0.25 (more distance-focused)',
-        'overrides': {'algorithm': 'energy_aware', 'alpha': 0.75, 'beta': 0.25},
+        'overrides': {'alpha': 0.75, 'beta': 0.25},
     },
 ]
 
@@ -101,6 +110,9 @@ def make_settings(seed, algorithm, overrides):
     cfg = dict(BASE)
     cfg.update(overrides)
     cfg['seed'] = seed
+    # The loop's algorithm is the experimental contrast; scenario overrides
+    # may vary weights but must not silently replace the requested strategy.
+    cfg['algorithm'] = algorithm
 
     return SimulationSettings(
         network=NetworkConfig(
@@ -137,17 +149,41 @@ def make_settings(seed, algorithm, overrides):
     )
 
 
+def _write_json_atomic(path, data):
+    """Write a complete JSON artifact without exposing a partial final file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+        ) as stream:
+            temp_path = Path(stream.name)
+            json.dump(data, stream, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if temp_path is not None and temp_path.exists():
+            temp_path.unlink()
+
+
+def _settings_fingerprint(settings):
+    payload = json.dumps(asdict(settings), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+
+
 def run_single(seed, algorithm, overrides):
     """Run a single simulation and return the result dict."""
-    # Skip if result already exists
+    settings = make_settings(seed, algorithm, overrides)
     safe_name = overrides.get('_scenario_name', 'unknown').replace(' ', '_').replace('.', '_')
-    run_file = RAW_DIR / f'sens_{safe_name}_{algorithm}_seed{seed}.json'
+    fingerprint = _settings_fingerprint(settings)
+    run_file = RAW_DIR / f'sens_{safe_name}_{algorithm}_seed{seed}_{fingerprint}.json'
     if run_file.exists():
-        print(f"  seed={seed:3d} {algorithm:16s} SKIP (already exists)", flush=True)
+        print(f"  seed={seed:3d} {algorithm:16s} SKIP (matching configuration already exists)", flush=True)
         with open(run_file) as f:
             return json.load(f)
 
-    settings = make_settings(seed, algorithm, overrides)
     t0 = time.perf_counter()
     sim = create_simulator(settings)
     result = sim.run()
@@ -159,6 +195,8 @@ def run_single(seed, algorithm, overrides):
     d['_time_s'] = round(t1 - t0, 3)
     d['_scenario'] = overrides.get('_scenario_name', 'unknown')
     d['_overrides'] = {k: v for k, v in overrides.items() if k != '_scenario_name'}
+    d['_settings_fingerprint'] = fingerprint
+    _write_json_atomic(run_file, d)
     return d
 
 
@@ -176,18 +214,8 @@ def run_scenario(scenario):
             overrides = dict(scenario['overrides'])
             overrides['_scenario_name'] = scenario['name']
 
-            # For EA-only scenarios, set algorithm; for others use defaults
-            if 'algorithm' not in overrides:
-                overrides['algorithm'] = algo
-
             d = run_single(seed, algo, overrides)
             results.append(d)
-
-            # Save individual run
-            safe_name = scenario['name'].replace(' ', '_').replace('.', '_')
-            run_file = RAW_DIR / f'sens_{safe_name}_{algo}_seed{seed}.json'
-            with open(run_file, 'w') as f:
-                json.dump(d, f, indent=2)
 
             print(f"  seed={seed:3d} {algo:16s} PDR={d['packet_delivery_ratio']:.4f} "
                   f"FND={d['fnd']} HND={d['hnd']} LND={d['lnd']} "
@@ -196,8 +224,7 @@ def run_scenario(scenario):
     # Save scenario results
     safe_name = scenario['name'].replace(' ', '_').replace('.', '_')
     scenario_file = OUTPUT_DIR / f'{safe_name}_results.json'
-    with open(scenario_file, 'w') as f:
-        json.dump(results, f, indent=2)
+    _write_json_atomic(scenario_file, results)
 
     # Print per-seed paired summary
     print(f"\n  Paired summary for {scenario['name']}:")
@@ -260,8 +287,7 @@ if __name__ == '__main__':
 
     # Save all combined results
     combined_file = OUTPUT_DIR / 'all_sensitivity_results.json'
-    with open(combined_file, 'w') as f:
-        json.dump(all_results, f, indent=2)
+    _write_json_atomic(combined_file, all_results)
 
     print(f"\n{'='*70}")
     print(f"ALL SCENARIOS COMPLETE")

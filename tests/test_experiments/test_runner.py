@@ -185,6 +185,27 @@ class TestExperimentRunner:
         assert len(summary_files) == 1
 
     @patch('energy_routing.experiments.runner.create_simulator')
+    def test_repeated_experiment_saves_new_artifacts_without_overwriting(self, mock_create_simulator):
+        mock_simulator = MagicMock()
+        mock_simulator.run.return_value = SimulationResult(config={}, packet_delivery_ratio=0.0)
+        mock_create_simulator.return_value = mock_simulator
+        experiment = Experiment(
+            name="repeat_test",
+            description="Repeat output safety test",
+            base_settings=self.base_settings,
+            num_seeds=1,
+        )
+
+        self.runner.run_experiment(experiment)
+        self.runner.run_experiment(experiment)
+
+        raw_files = list((Path(self.temp_dir) / "raw").glob("*.json"))
+        summary_files = list((Path(self.temp_dir) / "summary").glob("*.json"))
+        assert len(raw_files) == 2
+        assert len(summary_files) == 2
+        assert len({path.name for path in raw_files}) == 2
+
+    @patch('energy_routing.experiments.runner.create_simulator')
     def test_run_comparison(self, mock_create_simulator):
         """Test running algorithm comparison."""
         mock_result_a = SimulationResult(

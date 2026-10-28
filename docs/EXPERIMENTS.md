@@ -13,7 +13,8 @@ This document describes the experimental methodology for comparing routing algor
 ### 1. Fair Comparisons
 - **Identical conditions**: Same topology, same traffic, same seed
 - **Paired experiments**: Same seed → same topology → different routing
-- **Multi-seed**: 5 seeds for statistical significance
+- **Multi-seed**: 5 paired seeds for exploratory summaries; this small sample
+  is not enough by itself to claim statistical significance.
 
 ### 2. Reproducibility
 - Fixed seeds for all experiments
@@ -36,7 +37,8 @@ This document describes the experimental methodology for comparing routing algor
 - **Network**: 50 nodes, 100×100m, range 20m
 - **Energy**: 1.0 J initial, standard radio model
 - **Simulation**: 1000 rounds, 1 packet/round
-- **Seeds**: 5 (42, 43, 44, 45, 46)
+- **Seeds**: 5 (42, 43, 44, 45, 46); treat as exploratory, not as sufficient
+  evidence of statistical significance.
 - **Fairness**: Same 5 seeds for both algorithms
 
 **Hypothesis**: Energy-aware routing will achieve longer network lifetime (higher FND, HND, LND) with comparable or better PDR.
@@ -163,7 +165,11 @@ results = runner.run_comparison(exp)
 - 1.0 J initial energy with the standard radio model (~0.00041 J per hop at
   10 m) allows nodes to deplete within 1000 rounds, enabling FND observation.
 - 1000 rounds provides a sufficient horizon for node death events.
-- 5 seeds (42-46) provide statistical significance for mean/std reporting.
+- 5 seeds (42-46) support exploratory mean/std reporting, not a significance
+  claim. Current comparison summaries also include paired restricted-mean FND
+  differences and a deterministic bootstrap 95% confidence interval. FND not
+  observed by the simulation horizon is right-censored at that horizon, not
+  treated as zero lifetime.
 
 ### Pilot Parameter Sweeps
 
@@ -245,7 +251,7 @@ For the main routing comparison, the following improvements are calculated:
 ## Statistical Rigor
 
 ### Multi-Seed Design
-- 5 seeds for main comparison (statistical significance)
+- 5 seeds for main comparison (exploratory summary only; not a significance claim)
 - 3 seeds for parameter sweeps (trend analysis)
 - Seed offset prevents correlation between experiments
 
@@ -342,6 +348,11 @@ For a larger hardened run (20 seeds, seeds 42–61), results were saved to
 - 95% CI for paired FND diff: [22.2, 63.5]
 - Mean paired PDR diff: +0.0073
 
+**Historical results — regenerate before relying on these numbers.** The route
+selection semantics have since been corrected to select a complete route once
+per packet, so these previously recorded numeric results are not directly
+comparable with new runs.
+
 **Interpretation:**
 - Energy-aware routing extends FND in 16 of 20 seeds (3 ties, 1 regression).
 - PDR is similar between algorithms — energy-aware improves *lifetime*, not delivery ratio.
@@ -380,7 +391,8 @@ Optimization details:
 - `max_distance` is cached keyed by graph object identity in
   `EnergyAwareRouting._get_max_distance()`
 - The cache is valid because edge distances are static during simulation
-- The same alive subgraph is reused for all packets within a round
+- Each packet route is computed once over the currently alive subgraph and
+  followed to completion; subsequent packets see updated node energy/liveness.
 - No stale-cache behavior is possible within the supported API
 
 
@@ -391,7 +403,10 @@ FND benefit of energy-aware routing persists across varied network conditions.
 Each scenario uses paired seeds (same topology and traffic for both algorithms)
 and compares shortest-path vs energy-aware routing (α=0.5, β=0.5 unless noted).
 
-Results saved to: `results/routing_sensitivity/raw/`
+Results are saved to a unique timestamped directory under
+`results/routing_sensitivity/` for each invocation. Earlier α/β sweep outputs
+used the same routing algorithm for both labeled arms due to an override bug;
+regenerate them before drawing conclusions.
 
 ### Scenario Matrix
 

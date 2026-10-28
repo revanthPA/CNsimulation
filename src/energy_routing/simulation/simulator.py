@@ -159,7 +159,6 @@ class Simulator:
             True if delivered, False if lost
         """
         current = packet.source_id
-        path = [current]
         
         # Get alive subgraph for routing (excludes dead nodes)
         alive_graph = get_alive_subgraph(self.graph, self.nodes)
@@ -171,19 +170,17 @@ class Simulator:
             self.nodes[current].packets_dropped += 1
             return False
         
-        while current != self.topology.base_station_id:
-            # Get next hop from routing strategy
-            next_hop = self.routing_strategy.get_next_hop(
-                alive_graph, self.nodes, current, self.topology.base_station_id
-            )
-            
-            if next_hop is None:
-                # No path to destination
-                packet = packet.with_status(PacketStatus.LOST)
-                self.lost_packets.append(packet)
-                self.nodes[current].packets_dropped += 1
-                return False
-            
+        route = self.routing_strategy.find_path(
+            alive_graph, self.nodes, current, self.topology.base_station_id
+        )
+        if len(route) < 2 or route[0] != current or route[-1] != self.topology.base_station_id:
+            packet = packet.with_status(PacketStatus.LOST)
+            self.lost_packets.append(packet)
+            self.nodes[current].packets_dropped += 1
+            return False
+
+        traversed_path = [current]
+        for current, next_hop in zip(route, route[1:]):
             # Get distance between current and next_hop
             distance = self.graph[current][next_hop].get("distance", 0.0)
             
@@ -191,23 +188,17 @@ class Simulator:
             success = self._deliver_hop(current, next_hop, distance)
             
             # Add to path
-            path.append(next_hop)
+            traversed_path.append(next_hop)
             
             if not success:
                 # Hop failed - packet lost
-                packet = packet.with_path(tuple(path)).with_status(PacketStatus.LOST)
+                packet = packet.with_path(tuple(traversed_path)).with_status(PacketStatus.LOST)
                 self.lost_packets.append(packet)
                 return False
             
-            # Hop succeeded - move to next hop
-            current = next_hop
-            
-            # Check if we reached base station
-            if current == self.topology.base_station_id:
-                break
         
         # Packet delivered successfully
-        packet = packet.with_path(tuple(path)).with_status(PacketStatus.DELIVERED).with_delivery_round(self.current_round)
+        packet = packet.with_path(tuple(traversed_path)).with_status(PacketStatus.DELIVERED).with_delivery_round(self.current_round)
         self.delivered_packets.append(packet)
         return True
     

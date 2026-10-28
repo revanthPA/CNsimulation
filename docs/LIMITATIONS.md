@@ -70,7 +70,8 @@
 ### Generalizability Concerns:
 - Results specific to simulated conditions
 - Real-world performance may differ significantly
-- Parameter sensitivity not fully explored (only α/β sweep)
+- Sensitivity coverage is limited. Earlier α/β sweep outputs are invalidated
+  by an algorithm-selection bug and should be regenerated.
 
 ## Known Issues
 
@@ -87,7 +88,8 @@
 ### 3. Visualization Limitations
 - Matplotlib backend must be set to 'Agg' for headless environments
 - Large networks (200+ nodes) may produce cluttered plots
-- No interactive visualization (static PNG only)
+- Dashboard visualizations are interactive; exported experiment plots are
+  static PNG files.
 
 ### 4. Performance
 - Simulation scales as O(nodes × rounds × packets)
